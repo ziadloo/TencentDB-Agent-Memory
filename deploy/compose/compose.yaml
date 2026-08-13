@@ -2,7 +2,8 @@ name: tencentdb-agent-memory
 
 # Single-file deployment template.
 #
-# Edit the values marked "CHANGE ME" in this file before deploying. This file
+# Edit the values marked "CHANGE ME" in this file before deploying. Replace
+# `/mnt/tank/...` with the actual dataset paths on the Docker host. This file
 # intentionally contains all image, LLM, authentication, networking, and
 # persistence configuration so it can be imported as one Compose application.
 
@@ -23,7 +24,8 @@ services:
       TDAI_LLM_MAX_TOKENS: "32000"
       TDAI_LLM_TIMEOUT_MS: "300000"
     volumes:
-      - memory-core-data:/data/tdai-memory
+      # CHANGE ME: host dataset for MemoryCore data.
+      - /mnt/tank/apps/tencentdb-agent-memory/core:/data/tdai-memory
     networks:
       - memory
     healthcheck:
@@ -61,7 +63,8 @@ services:
       LLM_TIMEOUT_MS: "1200000"
       KNOWLEDGE_LLM_BINDING_SYNC: "0"
     volumes:
-      - memory-hub-data:/data/knowledge
+      # CHANGE ME: host dataset for Panel and Knowledge Service data.
+      - /mnt/tank/apps/tencentdb-agent-memory/hub:/data/knowledge
     networks:
       - memory
     healthcheck:
@@ -143,7 +146,8 @@ services:
 
         exec node --import tsx/esm src/index.ts --config /data/config.yaml
     volumes:
-      - memory-proxy-data:/data/tdai-memory-proxy
+      # CHANGE ME: host dataset for proxy state and SQLite data.
+      - /mnt/tank/apps/tencentdb-agent-memory/proxy:/data/tdai-memory-proxy
     networks:
       - memory
     healthcheck:
@@ -156,8 +160,3 @@ services:
 networks:
   memory:
     driver: bridge
-
-volumes:
-  memory-core-data:
-  memory-hub-data:
-  memory-proxy-data:

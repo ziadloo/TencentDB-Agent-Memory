@@ -27,8 +27,21 @@ docker compose -f compose.yaml up -d
 ```
 
 The image references use the public GHCR `:latest` tag. The Compose file uses
-named volumes for all runtime data and a private bridge network for
+explicit host-path mounts for all runtime data and a private bridge network for
 service-to-service calls.
+
+Before starting the application, replace the three `/mnt/tank/...` paths in
+`compose.yaml` with the actual host dataset paths:
+
+| Host dataset | Container path | Purpose |
+| --- | --- | --- |
+| `/mnt/tank/apps/tencentdb-agent-memory/core` | `/data/tdai-memory` | MemoryCore data |
+| `/mnt/tank/apps/tencentdb-agent-memory/hub` | `/data/knowledge` | Panel and Knowledge data |
+| `/mnt/tank/apps/tencentdb-agent-memory/proxy` | `/data/tdai-memory-proxy` | Proxy state and SQLite data |
+
+Create the datasets first and ensure the containers can write to them. The
+proxy runs as a non-root user, so its dataset permissions must allow writes by
+the container user.
 
 ## GHCR package visibility
 
