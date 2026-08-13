@@ -1,0 +1,97 @@
+name: tencentdb-agent-memory
+
+services:
+  memory-core:
+    image: ${IMAGE_NAMESPACE:?Set IMAGE_NAMESPACE in .env}/memory-core:${IMAGE_TAG:?Set IMAGE_TAG in .env}
+    restart: unless-stopped
+    ports:
+      - "${MEMORY_CORE_PORT:-8420}:8420"
+    environment:
+      NODE_ENV: production
+      TDAI_GATEWAY_HOST: 0.0.0.0
+      TDAI_GATEWAY_PORT: 8420
+      TDAI_GATEWAY_API_KEY: ${MEMORY_CORE_GATEWAY_API_KEY:?Set MEMORY_CORE_GATEWAY_API_KEY in .env}
+      TDAI_LLM_BASE_URL: ${MEMORY_LLM_BASE_URL:?Set MEMORY_LLM_BASE_URL in .env}
+      TDAI_LLM_API_KEY: ${MEMORY_LLM_API_KEY:?Set MEMORY_LLM_API_KEY in .env}
+      TDAI_LLM_MODEL: ${MEMORY_LLM_MODEL:?Set MEMORY_LLM_MODEL in .env}
+      TDAI_LLM_MAX_TOKENS: ${MEMORY_LLM_MAX_TOKENS:-32000}
+      TDAI_LLM_TIMEOUT_MS: ${MEMORY_LLM_TIMEOUT_MS:-300000}
+    volumes:
+      - memory-core-data:/data/tdai-memory
+    networks:
+      - memory
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8420/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  memory-hub:
+    image: ${IMAGE_NAMESPACE:?Set IMAGE_NAMESPACE in .env}/memory-hub:${IMAGE_TAG:?Set IMAGE_TAG in .env}
+    restart: unless-stopped
+    depends_on:
+      memory-core:
+        condition: service_healthy
+    ports:
+      - "${PANEL_PORT:-8125}:8125"
+      - "${KNOWLEDGE_PORT:-8424}:8424"
+    environment:
+      NODE_ENV: production
+      PANEL_PORT: 8125
+      KNOWLEDGE_PORT: 8424
+      KNOWLEDGE_PUBLIC_BASE_URL: ${KNOWLEDGE_PUBLIC_BASE_URL:?Set KNOWLEDGE_PUBLIC_BASE_URL in .env}
+      REMOTE_INSTANCE_ID: ${REMOTE_INSTANCE_ID:-default}
+      REMOTE_INSTANCE_NAME: ${REMOTE_INSTANCE_NAME:-default}
+      REMOTE_INSTANCE_URL: http://memory-core:8420
+      REMOTE_INSTANCE_KEY: ${MEMORY_CORE_GATEWAY_API_KEY:?Set MEMORY_CORE_GATEWAY_API_KEY in .env}
+      LLM_MODE: custom
+      LLM_PROTOCOL: ${MEMORY_LLM_PROTOCOL:-openai}
+      LLM_API_KEY: ${MEMORY_LLM_API_KEY:?Set MEMORY_LLM_API_KEY in .env}
+      LLM_BASE_URL: ${MEMORY_LLM_BASE_URL:?Set MEMORY_LLM_BASE_URL in .env}
+      LLM_MODEL: ${MEMORY_LLM_MODEL:?Set MEMORY_LLM_MODEL in .env}
+      LLM_MAX_TOKENS: ${MEMORY_LLM_MAX_TOKENS:-32768}
+      LLM_TIMEOUT_MS: ${MEMORY_LLM_TIMEOUT_MS:-1200000}
+      KNOWLEDGE_LLM_BINDING_SYNC: '0'
+    volumes:
+      - memory-hub-data:/data/knowledge
+    networks:
+      - memory
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8125/health >/dev/null && curl -fsS http://127.0.0.1:8424/health >/dev/null"]
+      interval: 30s
+      timeout: 8s
+      retries: 5
+      start_period: 45s
+
+  memory-proxy:
+    image: ${IMAGE_NAMESPACE:?Set IMAGE_NAMESPACE in .env}/memory-proxy:${IMAGE_TAG:?Set IMAGE_TAG in .env}
+    restart: unless-stopped
+    depends_on:
+      memory-core:
+        condition: service_healthy
+      memory-hub:
+        condition: service_healthy
+    ports:
+      - "${PROXY_PORT:-8096}:8096"
+    volumes:
+      - ./config/proxy.yaml:/data/config.yaml:ro
+      - memory-proxy-data:/data/tdai-memory-proxy
+    networks:
+      - memory
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8096/health || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+networks:
+  memory:
+    driver: bridge
+
+volumes:
+  memory-core-data:
+  memory-hub-data:
+  memory-proxy-data:
+

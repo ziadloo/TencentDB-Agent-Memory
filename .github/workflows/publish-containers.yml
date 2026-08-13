@@ -1,0 +1,77 @@
+name: Publish container images
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+concurrency:
+  group: publish-containers-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish:
+    name: Publish linux/amd64 images
+    runs-on: ubuntu-latest
+    env:
+      REGISTRY: ghcr.io
+      PLATFORMS: linux/amd64
+      ALSO_LATEST: '1'
+      PUSH: '1'
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve and validate version tag
+        id: version
+        env:
+          EVENT_TAG: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          tag="$EVENT_TAG"
+
+          if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Expected an exact version tag matching vX.Y.Z; received: $tag" >&2
+            exit 1
+          fi
+
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "Publishing version: $tag"
+
+      - name: Normalize image namespace
+        id: namespace
+        env:
+          REPOSITORY_OWNER: ${{ github.repository_owner }}
+        shell: bash
+        run: echo "value=${REPOSITORY_OWNER,,}/tencentdb-agent-memory" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Publish images
+        env:
+          VERSION: ${{ steps.version.outputs.tag }}
+          NAMESPACE: ${{ steps.namespace.outputs.value }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # The publisher prepares the combined memory-hub context and the
+          # public cost-guard stub required by the memory-proxy build.
+          bash deploy/dockerhub/publish.sh all

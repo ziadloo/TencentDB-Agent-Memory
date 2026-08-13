@@ -68,6 +68,10 @@ deploy/global-images/.admin-key
 deploy/global-images/.proxy-config/
 deploy/global-images/.memory-core-config/
 
+# Local Compose credentials/configuration
+deploy/compose/.env
+deploy/compose/config/proxy.local.yaml
+
 # Eval scripts output
 scripts/eval-report.json
 

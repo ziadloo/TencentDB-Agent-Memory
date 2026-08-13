@@ -1,0 +1,57 @@
+# Copy/edit this file before starting the stack.
+# Keep credentials out of Git and restrict permissions on this file.
+
+server:
+  host: 0.0.0.0
+  port: 8096
+  forwardTimeoutMs: 600000
+
+# Configure the upstream LLM here. The proxy forwards both supported protocols
+# to this upstream without changing the client-facing protocol.
+upstream:
+  url: https://api.openai.com/v1
+  apiKey: replace-with-your-llm-api-key
+
+log:
+  file: ""
+  level: info
+  backend: console
+
+# Use the local SQLite-backed proxy storage so this template has no Redis
+# dependency. Change to another supported backend for a multi-node deployment.
+redis:
+  enabled: false
+
+storage:
+  enabled: true
+  backend: sqlite
+  sqlite:
+    dbPath: /data/tdai-memory-proxy/proxy.db
+
+tdai:
+  enabled: true
+  endpoint: http://memory-core:8420
+  apiKey: replace-with-the-memory-core-gateway-key
+  serviceId: default
+  memory:
+    enabled: true
+    inject: true
+    writeL0: true
+    recallL1: true
+    injectL2L3: true
+
+skill:
+  endpoint: http://memory-core:8420
+  serviceToken: replace-with-the-memory-core-gateway-key
+  serviceId: context-proxy
+
+auth:
+  enabled: false
+  url: http://memory-core:8420
+
+sessionInit:
+  enabled: false
+
+costGuard:
+  enabled: false
+
