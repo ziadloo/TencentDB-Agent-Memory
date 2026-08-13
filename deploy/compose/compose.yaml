@@ -1,21 +1,27 @@
 name: tencentdb-agent-memory
 
+# Single-file deployment template.
+#
+# Edit the values marked "CHANGE ME" in this file before deploying. This file
+# intentionally contains all image, LLM, authentication, networking, and
+# persistence configuration so it can be imported as one Compose application.
+
 services:
   memory-core:
-    image: ${IMAGE_NAMESPACE:?Set IMAGE_NAMESPACE in .env}/memory-core:${IMAGE_TAG:?Set IMAGE_TAG in .env}
+    image: ghcr.io/ziadloo/tencentdb-agent-memory/memory-core:latest
     restart: unless-stopped
     ports:
-      - "${MEMORY_CORE_PORT:-8420}:8420"
+      - "8420:8420"
     environment:
       NODE_ENV: production
       TDAI_GATEWAY_HOST: 0.0.0.0
       TDAI_GATEWAY_PORT: 8420
-      TDAI_GATEWAY_API_KEY: ${MEMORY_CORE_GATEWAY_API_KEY:?Set MEMORY_CORE_GATEWAY_API_KEY in .env}
-      TDAI_LLM_BASE_URL: ${MEMORY_LLM_BASE_URL:?Set MEMORY_LLM_BASE_URL in .env}
-      TDAI_LLM_API_KEY: ${MEMORY_LLM_API_KEY:?Set MEMORY_LLM_API_KEY in .env}
-      TDAI_LLM_MODEL: ${MEMORY_LLM_MODEL:?Set MEMORY_LLM_MODEL in .env}
-      TDAI_LLM_MAX_TOKENS: ${MEMORY_LLM_MAX_TOKENS:-32000}
-      TDAI_LLM_TIMEOUT_MS: ${MEMORY_LLM_TIMEOUT_MS:-300000}
+      TDAI_GATEWAY_API_KEY: "CHANGE-ME-long-random-memory-core-key"
+      TDAI_LLM_BASE_URL: "https://api.openai.com/v1"
+      TDAI_LLM_API_KEY: "CHANGE-ME-llm-api-key"
+      TDAI_LLM_MODEL: "gpt-4o-mini"
+      TDAI_LLM_MAX_TOKENS: "32000"
+      TDAI_LLM_TIMEOUT_MS: "300000"
     volumes:
       - memory-core-data:/data/tdai-memory
     networks:
@@ -28,31 +34,32 @@ services:
       start_period: 20s
 
   memory-hub:
-    image: ${IMAGE_NAMESPACE:?Set IMAGE_NAMESPACE in .env}/memory-hub:${IMAGE_TAG:?Set IMAGE_TAG in .env}
+    image: ghcr.io/ziadloo/tencentdb-agent-memory/memory-hub:latest
     restart: unless-stopped
     depends_on:
       memory-core:
         condition: service_healthy
     ports:
-      - "${PANEL_PORT:-8125}:8125"
-      - "${KNOWLEDGE_PORT:-8424}:8424"
+      - "8125:8125"
+      - "8424:8424"
     environment:
       NODE_ENV: production
       PANEL_PORT: 8125
       KNOWLEDGE_PORT: 8424
-      KNOWLEDGE_PUBLIC_BASE_URL: ${KNOWLEDGE_PUBLIC_BASE_URL:?Set KNOWLEDGE_PUBLIC_BASE_URL in .env}
-      REMOTE_INSTANCE_ID: ${REMOTE_INSTANCE_ID:-default}
-      REMOTE_INSTANCE_NAME: ${REMOTE_INSTANCE_NAME:-default}
-      REMOTE_INSTANCE_URL: http://memory-core:8420
-      REMOTE_INSTANCE_KEY: ${MEMORY_CORE_GATEWAY_API_KEY:?Set MEMORY_CORE_GATEWAY_API_KEY in .env}
-      LLM_MODE: custom
-      LLM_PROTOCOL: ${MEMORY_LLM_PROTOCOL:-openai}
-      LLM_API_KEY: ${MEMORY_LLM_API_KEY:?Set MEMORY_LLM_API_KEY in .env}
-      LLM_BASE_URL: ${MEMORY_LLM_BASE_URL:?Set MEMORY_LLM_BASE_URL in .env}
-      LLM_MODEL: ${MEMORY_LLM_MODEL:?Set MEMORY_LLM_MODEL in .env}
-      LLM_MAX_TOKENS: ${MEMORY_LLM_MAX_TOKENS:-32768}
-      LLM_TIMEOUT_MS: ${MEMORY_LLM_TIMEOUT_MS:-1200000}
-      KNOWLEDGE_LLM_BINDING_SYNC: '0'
+      # CHANGE ME if clients reach Knowledge Service through another address.
+      KNOWLEDGE_PUBLIC_BASE_URL: "http://localhost:8424/v3"
+      REMOTE_INSTANCE_ID: "default"
+      REMOTE_INSTANCE_NAME: "default"
+      REMOTE_INSTANCE_URL: "http://memory-core:8420"
+      REMOTE_INSTANCE_KEY: "CHANGE-ME-long-random-memory-core-key"
+      LLM_MODE: "custom"
+      LLM_PROTOCOL: "openai"
+      LLM_API_KEY: "CHANGE-ME-llm-api-key"
+      LLM_BASE_URL: "https://api.openai.com/v1"
+      LLM_MODEL: "gpt-4o-mini"
+      LLM_MAX_TOKENS: "32768"
+      LLM_TIMEOUT_MS: "1200000"
+      KNOWLEDGE_LLM_BINDING_SYNC: "0"
     volumes:
       - memory-hub-data:/data/knowledge
     networks:
@@ -65,7 +72,7 @@ services:
       start_period: 45s
 
   memory-proxy:
-    image: ${IMAGE_NAMESPACE:?Set IMAGE_NAMESPACE in .env}/memory-proxy:${IMAGE_TAG:?Set IMAGE_TAG in .env}
+    image: ghcr.io/ziadloo/tencentdb-agent-memory/memory-proxy:latest
     restart: unless-stopped
     depends_on:
       memory-core:
@@ -73,9 +80,69 @@ services:
       memory-hub:
         condition: service_healthy
     ports:
-      - "${PROXY_PORT:-8096}:8096"
+      - "8096:8096"
+    environment:
+      # These values are used by the inline proxy configuration below.
+      PROXY_UPSTREAM_URL: "https://api.openai.com/v1"
+      PROXY_UPSTREAM_API_KEY: "CHANGE-ME-llm-api-key"
+      MEMORY_CORE_GATEWAY_API_KEY: "CHANGE-ME-long-random-memory-core-key"
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        cat > /data/config.yaml <<'PROXY_CONFIG'
+        server:
+          host: 0.0.0.0
+          port: 8096
+          forwardTimeoutMs: 600000
+
+        upstream:
+          url: "$${PROXY_UPSTREAM_URL}"
+          apiKey: "$${PROXY_UPSTREAM_API_KEY}"
+
+        log:
+          file: ""
+          level: info
+          backend: console
+
+        redis:
+          enabled: false
+
+        storage:
+          enabled: true
+          backend: sqlite
+          sqlite:
+            dbPath: /data/tdai-memory-proxy/proxy.db
+
+        tdai:
+          enabled: true
+          endpoint: http://memory-core:8420
+          apiKey: "$${MEMORY_CORE_GATEWAY_API_KEY}"
+          serviceId: default
+          memory:
+            enabled: true
+            inject: true
+            writeL0: true
+            recallL1: true
+            injectL2L3: true
+
+        skill:
+          endpoint: http://memory-core:8420
+          serviceToken: "$${MEMORY_CORE_GATEWAY_API_KEY}"
+          serviceId: context-proxy
+
+        auth:
+          enabled: false
+          url: http://memory-core:8420
+
+        sessionInit:
+          enabled: false
+
+        costGuard:
+          enabled: false
+        PROXY_CONFIG
+
+        exec node --import tsx/esm src/index.ts --config /data/config.yaml
     volumes:
-      - ./config/proxy.yaml:/data/config.yaml:ro
       - memory-proxy-data:/data/tdai-memory-proxy
     networks:
       - memory
@@ -94,4 +161,3 @@ volumes:
   memory-core-data:
   memory-hub-data:
   memory-proxy-data:
-

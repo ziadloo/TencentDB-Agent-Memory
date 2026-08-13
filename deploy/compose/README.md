@@ -1,7 +1,8 @@
 # Generic Compose deployment
 
-This directory contains a generic Docker Compose template for the complete
-TencentDB Agent Memory stack:
+This directory contains a single-file Docker Compose template for the complete
+TencentDB Agent Memory stack. All image references, credentials, LLM settings,
+service wiring, and persistent volumes are defined in `compose.yaml`.
 
 - `memory-core`: memory and metadata gateway
 - `memory-hub`: Panel plus Knowledge Service
@@ -11,26 +12,23 @@ TencentDB Agent Memory stack:
 
 ```bash
 cd deploy/compose
-cp .env.example .env
-cp config/proxy.yaml config/proxy.local.yaml
-$EDITOR .env config/proxy.local.yaml
+$EDITOR compose.yaml
 ```
 
-Update `compose.yaml` so the proxy mount points to `config/proxy.local.yaml`, or
-copy the local file over `config/proxy.yaml`. Do not commit either file after
-adding credentials.
+Replace every `CHANGE-ME` value and update `KNOWLEDGE_PUBLIC_BASE_URL` if
+clients will reach the Knowledge Service through a different address. The
+inline proxy configuration is generated when the proxy container starts.
 
 Then start the stack:
 
 ```bash
-docker compose --env-file .env -f compose.yaml pull
-docker compose --env-file .env -f compose.yaml up -d
+docker compose -f compose.yaml pull
+docker compose -f compose.yaml up -d
 ```
 
-The `IMAGE_NAMESPACE` and `IMAGE_TAG` values select the public GHCR packages.
-Each release publishes both an immutable tag such as `v2.1.0` and the moving
-`:latest` tag. The Compose file uses named volumes for all runtime data and a
-private bridge network for service-to-service calls.
+The image references use the public GHCR `:latest` tag. The Compose file uses
+named volumes for all runtime data and a private bridge network for
+service-to-service calls.
 
 ## GHCR package visibility
 
