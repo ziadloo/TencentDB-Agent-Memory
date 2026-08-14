@@ -12,8 +12,16 @@ const log = createLogger("mcp-http");
 
 export interface HttpClientOptions {
   baseUrl: string;
-  /** Optional bearer token for auth. */
+  /** Bearer token used by the backend gateway. */
   token?: string;
+  /** Optional user key forwarded to MemoryCore metadata routes. */
+  userKey?: string;
+  /** Tenant/service identifier forwarded to both backends. */
+  serviceId?: string;
+  /** Optional second backend used by the remote MCP bridge. */
+  coreBaseUrl?: string;
+  /** Internal MemoryCore gateway credential, never supplied by the MCP client. */
+  coreToken?: string;
 }
 
 export interface ApiResponse {
@@ -33,9 +41,12 @@ export async function callApi(
   endpoint: string,
   body: Record<string, unknown>,
 ): Promise<unknown> {
-  const url = `${opts.baseUrl.replace(/\/$/, "")}/v3${endpoint}`;
+  const path = endpoint.startsWith("/v3/") ? endpoint : `/v3${endpoint}`;
+  const url = `${opts.baseUrl.replace(/\/$/, "")}${path}`;
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (opts.token) headers["Authorization"] = `Bearer ${opts.token}`;
+  if (opts.userKey) headers["x-tdai-user-key"] = opts.userKey;
+  if (opts.serviceId) headers["x-tdai-service-id"] = opts.serviceId;
 
   log.debug(`POST ${url}`);
 

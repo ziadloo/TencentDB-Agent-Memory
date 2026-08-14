@@ -1,9 +1,9 @@
 /**
- * MCP tool definitions — 12 query-class tools for LLM agents.
+ * MCP tool definitions for agent workspace access.
  *
- * Tools map to knowledge API query endpoints. Management operations
- * (create/delete/sync) are NOT exposed as MCP tools — those are control-plane
- * operations handled by the management UI.
+ * Existing Wiki and CodeGraph query tools are retained. MemoryCore workspace
+ * tools use an explicit `payload` object so upstream v3 schemas remain the
+ * source of truth; destructive operations are separately named and guarded.
  *
  * Code-Graph (8): code_search, code_explore, code_callers, code_callees,
  *                  code_impact, code_node, code_status, code_files
@@ -20,6 +20,10 @@ export interface McpToolDef {
   };
   /** HTTP endpoint to forward to (without /v3 prefix). */
   endpoint: string;
+  /** Backend API to call. Existing tools default to the Knowledge Service. */
+  backend?: "knowledge" | "core";
+  /** Destructive tools require an explicit confirmation field. */
+  destructive?: boolean;
 }
 
 export const MCP_TOOLS: McpToolDef[] = [
@@ -220,4 +224,97 @@ export const MCP_TOOLS: McpToolDef[] = [
     },
     endpoint: "/wiki/graph",
   },
+
+  // ── Memory (Core data plane) ──
+  ...memoryTools(),
+
+  // ── Skills ──
+  ...skillTools(),
+
+  // ── Workspace discovery ──
+  ...workspaceTools(),
 ];
+
+function payloadSchema() {
+  return {
+    type: "object" as const,
+    description: "Request body forwarded to the corresponding MemoryCore v3 endpoint.",
+    additionalProperties: true,
+  };
+}
+
+function coreTool(
+  name: string,
+  description: string,
+  endpoint: string,
+  destructive = false,
+): McpToolDef {
+  return {
+    name,
+    description,
+    inputSchema: {
+      type: "object",
+      properties: { payload: payloadSchema() },
+      required: ["payload"],
+    },
+    endpoint,
+    backend: "core",
+    destructive,
+  };
+}
+
+function memoryTools(): McpToolDef[] {
+  return [
+    coreTool("memory_conversation_add", "Append conversation messages to the explicitly identified memory context.", "/v3/conversation/add"),
+    coreTool("memory_conversation_query", "Read conversation memory for the explicitly identified context.", "/v3/conversation/query"),
+    coreTool("memory_conversation_search", "Search conversation memory for the explicitly identified context.", "/v3/conversation/search"),
+    coreTool("memory_conversation_count", "Count conversation memory for the explicitly identified context.", "/v3/conversation/count"),
+    coreTool("memory_conversation_delete", "Delete conversation messages. This is destructive and requires payload.confirm=true.", "/v3/conversation/delete", true),
+    coreTool("memory_atomic_update", "Create or update an atomic memory record.", "/v3/atomic/update"),
+    coreTool("memory_atomic_query", "Read atomic memories for the explicitly identified context.", "/v3/atomic/query"),
+    coreTool("memory_atomic_search", "Search atomic memories for the explicitly identified context.", "/v3/atomic/search"),
+    coreTool("memory_atomic_count", "Count atomic memories for the explicitly identified context.", "/v3/atomic/count"),
+    coreTool("memory_atomic_delete", "Delete atomic memories. This is destructive and requires payload.confirm=true.", "/v3/atomic/delete", true),
+    coreTool("memory_scenario_list", "List memory scenarios visible to the authenticated user.", "/v3/scenario/ls"),
+    coreTool("memory_scenario_read", "Read a memory scenario visible to the authenticated user.", "/v3/scenario/read"),
+    coreTool("memory_scenario_write", "Write a memory scenario explicitly owned by the authenticated workspace.", "/v3/scenario/write"),
+    coreTool("memory_scenario_count", "Count memory scenarios visible to the authenticated user.", "/v3/scenario/count"),
+    coreTool("memory_scenario_delete", "Delete a memory scenario. This is destructive and requires payload.confirm=true.", "/v3/scenario/rm", true),
+    coreTool("memory_core_read", "Read core memory data for the explicitly identified context.", "/v3/core/read"),
+    coreTool("memory_core_write", "Write core memory data for the explicitly identified context.", "/v3/core/write"),
+    coreTool("memory_core_count", "Count core memory data for the explicitly identified context.", "/v3/core/count"),
+  ];
+}
+
+function skillTools(): McpToolDef[] {
+  return [
+    coreTool("skill_create", "Create a versioned skill in the explicitly identified workspace.", "/v3/skill/create"),
+    coreTool("skill_get", "Read a skill or a historical skill version.", "/v3/skill/get"),
+    coreTool("skill_list", "List skills visible in the explicitly identified team or workspace.", "/v3/skill/list"),
+    coreTool("skill_search", "Search skills visible to the authenticated user.", "/v3/skill/search"),
+    coreTool("skill_versions", "List versions of a skill.", "/v3/skill/versions"),
+    coreTool("skill_update", "Replace a skill body using optimistic version checking.", "/v3/skill/update"),
+    coreTool("skill_patch", "Apply an explicit string patch to a skill using optimistic version checking.", "/v3/skill/patch"),
+    coreTool("skill_files_read", "Read a skill resource file.", "/v3/skill/files/read"),
+    coreTool("skill_files_write", "Write skill resource files using optimistic version checking.", "/v3/skill/files/write"),
+    coreTool("skill_files_remove", "Remove skill resource files. This is destructive and requires payload.confirm=true.", "/v3/skill/files/remove", true),
+    coreTool("skill_listing", "Render the available-skills listing for the explicitly identified workspace.", "/v3/skill/listing"),
+    coreTool("skill_conversation_add", "Append an agent turn to the skill-learning conversation buffer.", "/v3/skill/conversation/add"),
+    coreTool("skill_extract", "Trigger skill extraction for an explicitly identified conversation.", "/v3/skill/extract"),
+    coreTool("skill_force_archive", "Archive a skill-learning conversation. This is destructive and requires payload.confirm=true.", "/v3/skill/conversation/force-archive", true),
+    coreTool("skill_delete", "Archive a skill. This is destructive and requires payload.confirm=true.", "/v3/skill/delete", true),
+    coreTool("knowledge_list", "List knowledge entities visible to the authenticated workspace.", "/v3/knowledge/list"),
+    coreTool("knowledge_get", "Read a knowledge entity visible to the authenticated workspace.", "/v3/knowledge/get"),
+  ];
+}
+
+function workspaceTools(): McpToolDef[] {
+  return [
+    coreTool("workspace_current_user", "Resolve the authenticated user and permitted identity context.", "/v3/meta/user/get"),
+    coreTool("workspace_list_teams", "List teams visible to the authenticated user.", "/v3/meta/team/list"),
+    coreTool("workspace_list_agents", "List agents visible to the authenticated user.", "/v3/meta/agent/list"),
+    coreTool("workspace_list_tasks", "List tasks visible to the authenticated user.", "/v3/meta/task/list"),
+    coreTool("workspace_list_assets", "List assets accessible to the authenticated user.", "/v3/meta/asset/list-accessible"),
+    coreTool("workspace_list_agent_assets", "List fixed assets assigned to an explicitly identified agent.", "/v3/meta/agent-fixed-asset/list-with-detail"),
+  ];
+}

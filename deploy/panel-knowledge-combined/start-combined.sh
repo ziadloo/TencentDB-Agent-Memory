@@ -20,6 +20,7 @@ fi
 
 PANEL_PORT="${PANEL_PORT:-8125}"
 KNOWLEDGE_PORT="${KNOWLEDGE_PORT:-8424}"
+MCP_PORT="${MCP_PORT:-8425}"
 INSTANCE_ID="${REMOTE_INSTANCE_ID:-default}"
 INSTANCE_NAME="${REMOTE_INSTANCE_NAME:-$INSTANCE_ID}"
 KS_INTERNAL_URL="http://127.0.0.1:${KNOWLEDGE_PORT}"
@@ -101,6 +102,21 @@ PORT="${KNOWLEDGE_PORT}" LOG_LEVEL="${LOG_LEVEL:-info}" \
   node "$(test -f dist/server.js && echo dist/server.js || echo dist/server.mjs)" 2>&1 \
   | tee -a "$KNOWLEDGE_LOG" &
 KNOWLEDGE_PID=$!
+
+# Remote Streamable HTTP MCP endpoint. This is additive to the existing
+# stdio MCP server and lets Codex/OpenCode connect using only a URL.
+cd /app/knowledge
+MCP_PORT="${MCP_PORT}" \
+KNOWLEDGE_API_URL="http://127.0.0.1:${KNOWLEDGE_PORT}" \
+KNOWLEDGE_API_TOKEN="${KNOWLEDGE_API_TOKEN:-}" \
+MEMORY_CORE_API_URL="${MEMORY_CORE_API_URL:-http://memory-core:8420}" \
+MEMORY_CORE_API_KEY="${MEMORY_CORE_API_KEY:-${REMOTE_INSTANCE_KEY:-}}" \
+MCP_SERVICE_ID="${MCP_SERVICE_ID:-${REMOTE_INSTANCE_ID:-default}}" \
+MCP_REQUIRE_AUTH="${MCP_REQUIRE_AUTH:-true}" \
+MCP_CORS_ORIGIN="${MCP_CORS_ORIGIN:-*}" \
+node dist/mcp/http-server.mjs 2>&1 \
+  | tee -a "$KNOWLEDGE_LOG" &
+MCP_PID=$!
 
 # 等 KS 就绪再起 panel：panel 启动时会调 KS /v3/internal/llm-binding/status
 # 检查 binding 是否存在（ensureKnowledgeLlmBindings），KS 没起来会 fetch failed。

@@ -47,6 +47,7 @@ WORKDIR /app
 ENV NODE_ENV=production \
     PANEL_PORT=8125 \
     KNOWLEDGE_PORT=8424 \
+    MCP_PORT=8425 \
     REMOTE_INSTANCE_ID="" \
     REMOTE_INSTANCE_NAME="" \
     REMOTE_INSTANCE_URL="" \
@@ -82,7 +83,7 @@ COPY start-combined.sh /usr/local/bin/start-combined.sh
 COPY README.md /app/README.md
 RUN chmod +x /usr/local/bin/start-combined.sh && mkdir -p /data/knowledge /app/panel/config
 
-EXPOSE 8125 8424
+EXPOSE 8125 8424 8425
 
 HEALTHCHECK --interval=20s --timeout=8s --retries=15 --start-period=45s \
   CMD curl -fsS http://127.0.0.1:${PANEL_PORT}/health >/dev/null && curl -fsS http://127.0.0.1:${KNOWLEDGE_PORT}/health >/dev/null || exit 1

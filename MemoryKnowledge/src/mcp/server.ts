@@ -25,8 +25,13 @@ import { createLogger } from "../logger.js";
 const log = createLogger("mcp-server");
 
 export function createMcpServer(httpOpts: HttpClientOptions): Server {
+  // Keep the legacy stdio server focused on the Knowledge Service. The
+  // remote HTTP bridge opts into Core tools by providing coreBaseUrl.
+  const tools = httpOpts.coreBaseUrl
+    ? MCP_TOOLS
+    : MCP_TOOLS.filter((tool) => tool.backend !== "core");
   const toolMap = new Map<string, McpToolDef>();
-  for (const tool of MCP_TOOLS) {
+  for (const tool of tools) {
     toolMap.set(tool.name, tool);
   }
 
@@ -38,10 +43,13 @@ export function createMcpServer(httpOpts: HttpClientOptions): Server {
   // List tools
   server.setRequestHandler(ListToolsRequestSchema, async () => {
     return {
-      tools: MCP_TOOLS.map((t) => ({
+      tools: tools.map((t) => ({
         name: t.name,
         description: t.description,
         inputSchema: t.inputSchema,
+        annotations: t.destructive
+          ? { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false }
+          : { readOnlyHint: !t.backend || !t.name.includes("add") && !t.name.includes("write") && !t.name.includes("update") && !t.name.includes("patch") && !t.name.includes("create") && !t.name.includes("extract"), destructiveHint: false, openWorldHint: false },
       })),
     };
   });
@@ -58,9 +66,27 @@ export function createMcpServer(httpOpts: HttpClientOptions): Server {
       };
     }
 
-    const body = (args ?? {}) as Record<string, unknown>;
+    const rawArgs = (args ?? {}) as Record<string, unknown>;
+    const body = tool.backend === "core"
+      ? (rawArgs.payload as Record<string, unknown> | undefined)
+      : rawArgs;
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+      return {
+        content: [{ type: "text", text: "Error: payload must be an object" }],
+        isError: true,
+      };
+    }
+    if (tool.destructive && body.confirm !== true) {
+      return {
+        content: [{ type: "text", text: "Error: destructive operation requires payload.confirm=true" }],
+        isError: true,
+      };
+    }
     try {
-      const data = await callApi(httpOpts, tool.endpoint, body);
+      const backendOpts = tool.backend === "core"
+        ? { ...httpOpts, baseUrl: httpOpts.coreBaseUrl ?? httpOpts.baseUrl, token: httpOpts.coreToken ?? httpOpts.token }
+        : httpOpts;
+      const data = await callApi(backendOpts, tool.endpoint, body);
 
       // The code-graph query endpoints return {text, isError} — pass through directly
       if (data && typeof data === "object" && "text" in data && "isError" in data) {

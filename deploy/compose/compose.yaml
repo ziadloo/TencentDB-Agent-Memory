@@ -44,10 +44,20 @@ services:
     ports:
       - "8125:8125"
       - "8424:8424"
+      - "8425:8425"
     environment:
       NODE_ENV: production
       PANEL_PORT: 8125
       KNOWLEDGE_PORT: 8424
+      MCP_PORT: 8425
+      # MCP clients send each user's MemoryCore user key as Bearer token.
+      # The internal gateway key stays server-side and is never sent to clients.
+      MEMORY_CORE_API_KEY: "CHANGE-ME-long-random-memory-core-key"
+      MEMORY_CORE_API_URL: "http://memory-core:8420"
+      MCP_SERVICE_ID: "default"
+      MCP_REQUIRE_AUTH: "true"
+      KNOWLEDGE_API_TOKEN: ""
+      MCP_CORS_ORIGIN: "*"
       # CHANGE ME if clients reach Knowledge Service through another address.
       KNOWLEDGE_PUBLIC_BASE_URL: "http://localhost:8424/v3"
       REMOTE_INSTANCE_ID: "default"
@@ -68,7 +78,7 @@ services:
     networks:
       - memory
     healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8125/health >/dev/null && curl -fsS http://127.0.0.1:8424/health >/dev/null"]
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8125/health >/dev/null && curl -fsS http://127.0.0.1:8424/health >/dev/null && curl -fsS http://127.0.0.1:8425/health >/dev/null"]
       interval: 30s
       timeout: 8s
       retries: 5

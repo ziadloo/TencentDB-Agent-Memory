@@ -63,7 +63,30 @@ long-lived package-administration token.
 | Memory Gateway | `http://localhost:8420` |
 | Panel | `http://localhost:8125` |
 | Knowledge Service | `http://localhost:8424/v3` |
+| Remote MCP | `http://localhost:8425/mcp` |
 | Proxy | `http://localhost:8096` |
+
+The remote MCP endpoint is served directly by the `memory-hub` container. Put
+your public HTTPS URL in the reverse proxy, for example:
+
+```text
+https://memory.example.com/mcp  →  memory-hub:8425/mcp
+```
+
+The remote endpoint expects a per-user MemoryCore user key as its bearer token.
+Set `MEMORY_CORE_API_KEY` to the internal gateway key in `compose.yaml`; this
+key stays inside the deployment. Configure the user key in the MCP client:
+
+```bash
+codex mcp add tencentdb-memory --url https://memory.example.com/mcp \
+  --bearer-token-env-var TENCENTDB_MEMORY_USER_KEY
+export TENCENTDB_MEMORY_USER_KEY='your-user-key'
+```
+
+The endpoint exposes Wiki, CodeGraph, MemoryCore memory, Skill, Knowledge, and
+workspace-discovery tools. Read operations are broadly available; writes are
+explicitly named, and destructive operations require confirmation. The
+existing stdio MCP server remains available for local integrations.
 
 The `KNOWLEDGE_PUBLIC_BASE_URL` value must be an address reachable by the
 clients that will call Knowledge Service and must include `/v3`.

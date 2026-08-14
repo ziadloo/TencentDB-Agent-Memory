@@ -11,6 +11,7 @@
   "scripts": {
     "dev": "tsx src/server.ts",
     "dev:mcp": "tsx src/mcp/server.ts",
+    "dev:mcp:http": "tsx src/mcp/http-server.ts",
     "build": "tsdown",
     "test": "vitest run",
     "test:watch": "vitest",
