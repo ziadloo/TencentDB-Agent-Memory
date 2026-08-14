@@ -54,8 +54,11 @@ jobs:
             tag="$EVENT_TAG"
           fi
 
-          if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "Expected an exact version tag matching vX.Y.Z; received: $tag" >&2
+          # Accept the version prefix plus an optional suffix, such as
+          # v2.0.0-mcp0.0.0. Keep the prefix anchored at the beginning so
+          # unrelated tags cannot publish images accidentally.
+          if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+ ]]; then
+            echo "Expected a tag starting with vX.Y.Z; received: $tag" >&2
             exit 1
           fi
 
