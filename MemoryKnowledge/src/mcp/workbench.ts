@@ -36,6 +36,7 @@ interface WorkbenchResult {
 }
 
 const READABLE_ASSET_TYPES = new Set(["skill", "llm_wiki", "code_graph", "chat_memory"]);
+const METADATA_PAGE_SIZE = 100;
 
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -122,11 +123,7 @@ export class WorkbenchRuntime {
     injectionMode = "summary",
     priority = 50,
   ): Promise<void> {
-    const bindings = itemsOf(await this.core("/v3/meta/agent-fixed-asset/list", {
-      agent_id: ctx.agent_id,
-      limit: 1000,
-      offset: 0,
-    }));
+    const bindings = await this.listAgentBindings(ctx);
     if (!bindings.some((binding) => binding.asset_id === assetId)) {
       await this.core("/v3/meta/agent-fixed-asset/set", {
         agent_id: ctx.agent_id,
@@ -148,6 +145,22 @@ export class WorkbenchRuntime {
         ],
       });
     }
+  }
+
+  private async listAgentBindings(ctx: AgentWorkbenchContext): Promise<AssetRecord[]> {
+    const bindings: AssetRecord[] = [];
+    let offset = 0;
+    while (true) {
+      const page = itemsOf(await this.core("/v3/meta/agent-fixed-asset/list", {
+        agent_id: ctx.agent_id,
+        limit: METADATA_PAGE_SIZE,
+        offset,
+      }));
+      bindings.push(...page);
+      if (page.length < METADATA_PAGE_SIZE) break;
+      offset += METADATA_PAGE_SIZE;
+    }
+    return bindings;
   }
 
   async contextGet(): Promise<WorkbenchResult> {
@@ -282,7 +295,7 @@ export class WorkbenchRuntime {
       ...(ctx.scope === "agent" ? { agent_id: ctx.agent_id } : {}),
       ...(typeof input.asset_type === "string" ? { asset_type: input.asset_type } : {}),
       ...(typeof input.status === "string" ? { status: input.status } : {}),
-      ...(typeof input.limit === "number" ? { limit: input.limit } : {}),
+      ...(typeof input.limit === "number" ? { limit: Math.min(Math.max(input.limit, 1), METADATA_PAGE_SIZE) } : {}),
       ...(typeof input.offset === "number" ? { offset: input.offset } : {}),
     });
     return { data };
@@ -332,7 +345,7 @@ export class WorkbenchRuntime {
     const assetId = typeof input.asset_id === "string" ? input.asset_id : "";
     if (!assetId) throw new Error("asset_id is required");
     if (assetId === ctx.chat_memory_asset_id) throw new Error("The agent's own Chat Memory cannot be unbound");
-    const bindings = itemsOf(await this.core("/v3/meta/agent-fixed-asset/list", { agent_id: ctx.agent_id, limit: 1000, offset: 0 }));
+    const bindings = await this.listAgentBindings(ctx);
     if (!bindings.some((binding) => binding.asset_id === assetId)) return { data: { unbound: false, reason: "not_bound" } };
     await this.core("/v3/meta/agent-fixed-asset/set", {
       agent_id: ctx.agent_id,
@@ -357,7 +370,7 @@ export class WorkbenchRuntime {
       this.core("/v3/conversation/search", { ...ids, query, limit }),
       this.core("/v3/atomic/search", { ...ids, query, limit }),
       this.core("/v3/core/read", ids),
-      this.assetList({ limit: 1000 }),
+      this.assetList({ limit: METADATA_PAGE_SIZE }),
     ]);
     const value = (index: number): unknown => settled[index]?.status === "fulfilled" ? settled[index].value : null;
     const assets = itemsOf(value(3));

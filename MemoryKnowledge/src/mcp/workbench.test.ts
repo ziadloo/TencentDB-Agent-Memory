@@ -78,4 +78,37 @@ describe("WorkbenchRuntime", () => {
     await expect(runtime.invoke("asset_stage", { type: "code_graph", name: "Repo" }))
       .rejects.toThrow("repo_url is required");
   });
+
+  it("paginates agent fixed-asset reads at the metadata API limit", async () => {
+    const requests: Array<Record<string, unknown>> = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: string | URL, init?: RequestInit) => {
+      const endpoint = new URL(String(input)).pathname;
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      requests.push({ endpoint, ...body });
+      const page = body.offset === 0
+        ? Array.from({ length: 100 }, (_, index) => ({
+          asset_id: `asset-${index}`,
+          asset_type: "llm_wiki",
+        }))
+        : [];
+      return new Response(JSON.stringify({ code: 0, message: "ok", data: { items: page, total: 100 } }), { status: 200 });
+    }));
+
+    const runtime = new WorkbenchRuntime({ baseUrl: "http://knowledge", coreBaseUrl: "http://core" });
+    (runtime as unknown as { context: unknown }).context = {
+      scope: "agent",
+      user_id: "usr-test",
+      team_id: "team-test",
+      agent_id: "agt-test",
+      owner_user_id: "usr-test",
+      chat_memory_asset_id: "chat_memory-team-test-agt-test",
+    };
+
+    await expect(runtime.invoke("asset_unbind", { asset_id: "missing", confirm: true }))
+      .resolves.toMatchObject({ data: { unbound: false, reason: "not_bound" } });
+    expect(requests).toEqual([
+      expect.objectContaining({ endpoint: "/v3/meta/agent-fixed-asset/list", limit: 100, offset: 0 }),
+      expect.objectContaining({ endpoint: "/v3/meta/agent-fixed-asset/list", limit: 100, offset: 100 }),
+    ]);
+  });
 });

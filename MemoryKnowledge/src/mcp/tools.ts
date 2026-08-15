@@ -438,7 +438,7 @@ function workbenchTools(): McpToolDef[] {
         properties: {
           asset_type: { type: "string", enum: ["skill", "llm_wiki", "code_graph", "chat_memory"] },
           status: { type: "string", enum: ["draft", "candidate", "approved", "deprecated", "archived", "failed"] },
-          limit: { type: "integer", minimum: 1, maximum: 1000 },
+          limit: { type: "integer", minimum: 1, maximum: 100 },
           offset: { type: "integer", minimum: 0 },
         },
         additionalProperties: false,
