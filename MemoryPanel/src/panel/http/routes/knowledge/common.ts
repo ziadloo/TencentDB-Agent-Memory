@@ -360,6 +360,7 @@ export interface KnowledgeAssetListItem {
   stats?: { files: number; nodes: number; edges: number } | null;
   created_at?: string;
   updated_at?: string;
+  progress?: unknown;
 }
 
 async function joinWikiKs(
@@ -393,6 +394,7 @@ async function joinWikiKs(
       ks_missing: false,
       created_at: ks.created_at,
       updated_at: ks.updated_at,
+      progress: ks.progress ?? null,
     };
   } catch {
     return base;

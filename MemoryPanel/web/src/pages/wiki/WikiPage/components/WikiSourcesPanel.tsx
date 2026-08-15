@@ -11,7 +11,6 @@ import {
   Justify,
   MetricsBoard,
   Modal,
-  Progress,
   SearchBox,
   Segment,
   Select,
@@ -375,6 +374,7 @@ export default function WikiSourcesPanel() {
     checkCount: number;
     lastCheckedAt: string;
     log: Array<{ file: string; status: 'done' | 'error'; error?: string }>;
+    progress: WikiDetail['progress'];
   }>({
     active: false,
     wikiId: '',
@@ -386,6 +386,7 @@ export default function WikiSourcesPanel() {
     checkCount: 0,
     lastCheckedAt: '',
     log: [],
+    progress: null,
   });
 
   // Detail view state（Wiki 详情：图谱 / 页面 / 搜索 Tab）
@@ -592,6 +593,7 @@ export default function WikiSourcesPanel() {
       checkCount: 0,
       lastCheckedAt: '',
       log: [],
+      progress: null,
     });
     await knowledgeApi.wiki.ingestWithPolling(
       wikiId,
@@ -599,6 +601,7 @@ export default function WikiSourcesPanel() {
         onProgress: (ev) => {
           setIngestState((prev) => {
             const next = { ...prev };
+            next.progress = ev.progress ?? prev.progress;
             const checkedAt = new Date(ev.ts).toLocaleTimeString();
             if (ev.type === 'file_start') {
               next.currentFile = ev.file || '';
@@ -636,6 +639,7 @@ export default function WikiSourcesPanel() {
             total: 100,
             detail: t('wiki.ingest.done', { count: result.ingested }),
             currentFile: '',
+            progress: prev.progress ? { ...prev.progress, stage: 'ready' } : prev.progress,
           }));
           tea.notify.success(t('wiki.notify.ingestComplete', { count: result.ingested }));
           fetchSources();
@@ -947,9 +951,34 @@ export default function WikiSourcesPanel() {
       checkCount: 0,
       lastCheckedAt: '',
       log: [],
+      progress: runningWiki.progress ?? null,
     };
   }, [hasManualIngestState, ingestState, runningWiki]);
   const ingestBusy = displayIngestState.active || !!runningWiki;
+
+  const handleIngestControl = async (action: 'pause' | 'resume' | 'stop') => {
+    const wikiId = displayIngestState.wikiId;
+    if (!wikiId) return;
+    if (action === 'stop') {
+      const ok = await tea.confirm({
+        message: 'Stop ingestion and roll back generated wiki pages? Uploaded documents will be kept.',
+        okText: 'Stop and roll back',
+      });
+      if (!ok) return;
+    }
+    try {
+      const detail = await knowledgeApi.wiki.control(wikiId, action);
+      setIngestState((prev) => ({
+        ...prev,
+        active: action !== 'stop',
+        progress: detail.progress ?? prev.progress,
+        detail: action === 'pause' ? 'Paused after the current request.' : action === 'resume' ? 'Resuming ingestion.' : 'Stopping and rolling back…',
+      }));
+      fetchSources();
+    } catch (e: any) {
+      tea.notify.error(e);
+    }
+  };
 
   const { displayContent, metadata } = useMemo(() => {
     const text = readContent;
@@ -1075,16 +1104,33 @@ export default function WikiSourcesPanel() {
                   </div>
                   {displayIngestState.total > 0 && (
                     <>
-                      <Progress
-                        percent={Math.round(
-                          (displayIngestState.done / displayIngestState.total) * 100,
-                        )}
-                      />
+                      <div className="_wiki-ingest-stages" aria-label="Ingestion stages">
+                        {(['scanning', 'ingesting', 'rebuilding-index', 'ready'] as const).map((stage, index) => {
+                          const actual = displayIngestState.progress?.stage ?? (displayIngestState.active ? 'ingesting' : 'ready');
+                          const order = ['scanning', 'ingesting', 'rebuilding-index', 'ready'];
+                          const state = actual === stage ? 'active' : order.indexOf(actual) > index ? 'complete' : 'pending';
+                          return <div key={stage} className={`_wiki-ingest-stage _wiki-ingest-stage-${state}`}><span>{index + 1}</span><Text theme="label">{stage}</Text></div>;
+                        })}
+                      </div>
+                      <div className="_wiki-ingest-blocks" role="img" aria-label={`${displayIngestState.progress?.completed_units ?? 0} completed ingestion work units`}>
+                        {Array.from({ length: Math.max(12, Math.min(240, (displayIngestState.progress?.completed_units ?? 0) + 12)) }).map((_, index) => {
+                          const completed = index < (displayIngestState.progress?.completed_units ?? 0);
+                          return <span key={index} className={`_wiki-ingest-block ${completed ? '_wiki-ingest-block-done' : ''}`} />;
+                        })}
+                      </div>
                       <div className="_wiki-detail-ingest-meta">
                         <Text theme="label">{displayIngestState.detail}</Text>
                         <Text theme="label">
-                          {displayIngestState.done}/{displayIngestState.total}
+                          {displayIngestState.progress?.completed_units ?? 0} completed units
                         </Text>
+                      </div>
+                      <div className="_wiki-ingest-controls">
+                        {displayIngestState.progress?.pause_requested ? (
+                          <Button onClick={() => handleIngestControl('resume')}>Resume</Button>
+                        ) : (
+                          <Button disabled={!displayIngestState.active} onClick={() => handleIngestControl('pause')}>Pause</Button>
+                        )}
+                        <Button type="weak" disabled={!displayIngestState.active} onClick={() => handleIngestControl('stop')}>Stop and roll back</Button>
                       </div>
                       {displayIngestState.checkCount > 0 && (
                         <Text theme="label">

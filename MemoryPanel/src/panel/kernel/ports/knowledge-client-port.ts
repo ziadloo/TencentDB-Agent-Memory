@@ -28,6 +28,18 @@ export interface WikiDetail {
   last_sync_at: string | null;
   created_at: string;
   updated_at: string;
+  progress?: {
+    run_id: string;
+    stage: string;
+    completed_units: number;
+    total_units: number | null;
+    unit_kind: string;
+    current_label: string | null;
+    started_at: string;
+    updated_at: string;
+    pause_requested: boolean;
+    stop_requested: boolean;
+  } | null;
 }
 
 export interface WikiListResult {
@@ -158,6 +170,7 @@ export interface KnowledgeClientPort {
   wikiCreate(teamId: string, name: string, userId?: string): Promise<WikiDetail>;
   wikiGet(wikiId: string): Promise<WikiDetail>;
   wikiIngest(wikiId: string): Promise<WikiIngestResult>;
+  wikiIngestControl(wikiId: string, action: 'pause' | 'resume' | 'stop'): Promise<WikiDetail>;
   wikiDelete(wikiIds: string[]): Promise<BatchDeleteResult>;
   wikiList(teamId: string, opts?: { status?: string; limit?: number; offset?: number }): Promise<WikiListResult>;
   wikiUpdateMeta(wikiId: string, patch: { name?: string; summary?: string | null }): Promise<WikiDetail>;

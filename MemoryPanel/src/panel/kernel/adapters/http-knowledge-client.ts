@@ -94,6 +94,10 @@ export class HttpKnowledgeClient implements KnowledgeClientPort {
     return this.post('/v3/wiki/ingest', { wiki_id: wikiId });
   }
 
+  async wikiIngestControl(wikiId: string, action: 'pause' | 'resume' | 'stop'): Promise<WikiDetail> {
+    return this.post(`/v3/wiki/ingest/${action}`, { wiki_id: wikiId });
+  }
+
   async wikiDelete(wikiIds: string[]): Promise<BatchDeleteResult> {
     return this.post('/v3/wiki/delete', { wiki_ids: wikiIds });
   }

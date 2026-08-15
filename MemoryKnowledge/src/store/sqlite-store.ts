@@ -404,6 +404,8 @@ export class SqliteKnowledgeStore implements IKnowledgeStore {
     if (patch.service_url !== undefined) set.serviceUrl = patch.service_url;
     if (patch.summary !== undefined) set.summary = patch.summary;
     if (patch.version !== undefined) set.version = patch.version;
+    if (patch.progress !== undefined) set.progressJson = patch.progress ? JSON.stringify(patch.progress) : null;
+    if (patch.progress !== undefined) set.progressJson = patch.progress ? JSON.stringify(patch.progress) : null;
 
     this.db
       .update(knowledgeWiki)
@@ -645,6 +647,16 @@ export class SqliteKnowledgeStore implements IKnowledgeStore {
       created_at: r.createdAt,
       updated_at: r.updatedAt,
       deleted_at: r.deletedAt ?? null,
+      progress: r.progressJson ? parseWikiProgress(r.progressJson) : null,
     };
+  }
+}
+
+function parseWikiProgress(value: string): import("./types.js").WikiProgress | null {
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === "object" ? parsed : null;
+  } catch {
+    return null;
   }
 }

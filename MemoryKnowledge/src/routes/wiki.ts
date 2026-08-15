@@ -91,6 +91,20 @@ export function createWikiRoutes(deps: WikiRouteDeps): Hono {
     return c.json(wrapOk({ wiki_id: result.row.wiki_id, status: result.row.status }), 202);
   });
 
+  for (const action of ["pause", "resume", "stop"] as const) {
+    app.post(`/ingest/${action}`, async (c) => {
+      const body = await c.req.json<Record<string, unknown>>();
+      const serviceId = c.req.header("x-tdai-service-id");
+      if (!isValidIdSegment(serviceId)) return c.json(wrapError(400, "x-tdai-service-id header is required"), 400);
+      const wikiId = body.wiki_id;
+      if (!isValidIdSegment(wikiId)) return c.json(wrapError(400, "wiki_id is required"), 400);
+      const result = wikiService[action](serviceId, wikiId);
+      if (result.kind === "not_found") return c.json(wrapError(404, "wiki not found"), 404);
+      if (result.kind === "invalid") return c.json(wrapError(409, result.message), 409);
+      return c.json(wrapOk(toWikiDetail(result.row)));
+    });
+  }
+
   app.post("/delete", async (c) => {
     const body = await c.req.json<Record<string, unknown>>();
     const serviceId = c.req.header("x-tdai-service-id");

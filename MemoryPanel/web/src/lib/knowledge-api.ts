@@ -84,6 +84,20 @@ export interface WikiDetail {
   last_sync_at: string | null;
   created_at: string;
   updated_at: string;
+  progress?: WikiProgress | null;
+}
+
+export interface WikiProgress {
+  run_id: string;
+  stage: string;
+  completed_units: number;
+  total_units: number | null;
+  unit_kind: string;
+  current_label: string | null;
+  started_at: string;
+  updated_at: string;
+  pause_requested: boolean;
+  stop_requested: boolean;
 }
 
 export interface CodeGraphDetail {
@@ -147,6 +161,7 @@ export interface IngestProgressEvent {
   total?: number;
   error?: string;
   ts: number;
+  progress?: WikiProgress | null;
 }
 
 export interface IngestStreamCallbacks {
@@ -186,6 +201,7 @@ export interface KnowledgeAssetItem {
   stats?: { files: number; nodes: number; edges: number } | null;
   created_at?: string;
   updated_at?: string;
+  progress?: WikiProgress | null;
 }
 
 function assetItemToWiki(item: KnowledgeAssetItem): WikiDetail {
@@ -204,6 +220,7 @@ function assetItemToWiki(item: KnowledgeAssetItem): WikiDetail {
     last_sync_at: item.last_sync_at ?? null,
     created_at: item.created_at ?? '',
     updated_at: item.updated_at ?? '',
+    progress: item.progress ?? null,
   };
 }
 
@@ -318,6 +335,8 @@ export const knowledgeApi = {
     /** 触发异步 ingest（返回后轮询 get 看 status） */
     ingest: (wikiId: string): Promise<void> =>
       panelPost('/wiki/ingest', { wiki_id: wikiId }),
+    control: (wikiId: string, action: 'pause' | 'resume' | 'stop'): Promise<WikiDetail> =>
+      panelPost(`/wiki/ingest/${action}`, { wiki_id: wikiId }),
 
     /** 触发 ingest 后轮询 wiki/get，用真实 status/internal_status 驱动进度展示。 */
     ingestWithPolling: async (wikiId: string, callbacks: IngestStreamCallbacks, _teamId: string): Promise<void> => {
@@ -343,6 +362,7 @@ export const knowledgeApi = {
             done,
             total: 100,
             ts: Date.now(),
+            progress: detail.progress,
           });
 
           if (detail.status === 'ready') {

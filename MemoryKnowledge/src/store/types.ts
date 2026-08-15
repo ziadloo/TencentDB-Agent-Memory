@@ -25,6 +25,29 @@ export type SyncStatus = "pending" | "processing" | "ready" | "failed";
  */
 export type WikiStatus = SyncStatus | "draft";
 
+export type WikiProgressStage =
+  | "scanning"
+  | "ingesting"
+  | "rebuilding-index"
+  | "ready"
+  | "paused"
+  | "stopping"
+  | "cancelled"
+  | "failed";
+
+export interface WikiProgress {
+  run_id: string;
+  stage: WikiProgressStage;
+  completed_units: number;
+  total_units: number | null;
+  unit_kind: "source" | "chunk" | "page" | "merge" | "index";
+  current_label: string | null;
+  started_at: string;
+  updated_at: string;
+  pause_requested: boolean;
+  stop_requested: boolean;
+}
+
 // ───────────────────────── Code-Graph ─────────────────────────
 
 export interface CodeGraphRow {
@@ -109,6 +132,7 @@ export interface WikiRow {
   created_at: string;
   updated_at: string;
   deleted_at: string | null;
+  progress: WikiProgress | null;
 }
 
 export interface CreateWikiInput {
@@ -134,6 +158,7 @@ export interface WikiStatusPatch {
   service_url?: string | null;
   summary?: string | null;
   version?: number;
+  progress?: WikiProgress | null;
 }
 
 export interface WikiMetaPatch {

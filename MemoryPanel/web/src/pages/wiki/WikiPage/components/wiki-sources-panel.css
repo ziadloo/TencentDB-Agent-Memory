@@ -240,6 +240,57 @@
   gap: 8px;
 }
 
+._wiki-ingest-stages {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+}
+
+._wiki-ingest-stage {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: var(--tea-color-text-secondary);
+}
+
+._wiki-ingest-stage > span {
+  display: inline-flex;
+  width: 20px;
+  height: 20px;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: var(--tea-color-fill-2);
+  font-size: 11px;
+}
+
+._wiki-ingest-stage-active { color: var(--tea-color-brand); }
+._wiki-ingest-stage-active > span,
+._wiki-ingest-stage-complete > span { background: var(--tea-color-brand); color: #fff; }
+
+._wiki-ingest-blocks {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(8px, 1fr));
+  gap: 3px;
+  min-height: 42px;
+  padding: 8px;
+  border: 1px solid var(--tea-color-line-2);
+  border-radius: 4px;
+  background: var(--tea-color-fill-1);
+}
+
+._wiki-ingest-block {
+  display: block;
+  height: 8px;
+  border-radius: 1px;
+  background: var(--tea-color-fill-3);
+}
+
+._wiki-ingest-block-done { background: var(--tea-color-brand); }
+
+._wiki-ingest-controls { display: flex; gap: 8px; }
+
 ._wiki-detail-ingest-title {
   color: var(--tea-color-text-primary);
   font-size: 13px;

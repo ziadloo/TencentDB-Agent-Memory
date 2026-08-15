@@ -62,6 +62,10 @@ export interface IngestOptions {
    *   - "single-stage"：源全文直接产出 FILE 块（少一次 LLM 调用，省 token）。
    */
   mode?: "two-stage" | "single-stage";
+  /** Called immediately before each LLM request; used for cooperative controls. */
+  beforeRequest?: (label: string) => Promise<void> | void;
+  /** Called after a completed work unit. */
+  onUnit?: (unit: { kind: "chunk" | "page" | "merge"; label: string }) => void;
 }
 
 /**
@@ -115,6 +119,7 @@ export async function ingestSource(
     if (mode === "two-stage") {
       // OQ-4 阶段 A：分析 —— 产出结构化抽取计划。
       log.debug("阶段A 分析开始", { chunk: tag });
+      await options.beforeRequest?.(`analysis:${tag}`);
       const analysis = await llm.chat({
         system: buildAnalysisSystemPrompt(template),
         prompt: buildAnalysisPrompt({ sourceName: chunkLabel, sourceText: chunks[i], existingPages }),
@@ -129,12 +134,15 @@ export async function ingestSource(
         ? buildGenerateFromAnalysisPrompt({ sourceName: chunkLabel, sourceText: chunks[i], analysis, existingPages })
         : buildGeneratePrompt({ sourceName: chunkLabel, sourceText: chunks[i], existingPages });
       if (!analysis.trim()) log.warn("分析为空，降级单阶段生成", { chunk: tag });
+      await options.beforeRequest?.(`generate:${tag}`);
       out = await llm.chat({ system: systemPrompt, prompt: genPrompt, label: `generate:${tag}` });
     } else {
       // 单阶段：源全文直接产出 FILE 块。
       const prompt = buildGeneratePrompt({ sourceName: chunkLabel, sourceText: chunks[i], existingPages });
+      await options.beforeRequest?.(`generate:${tag}`);
       out = await llm.chat({ system: systemPrompt, prompt, label: `generate:${tag}` });
     }
+    options.onUnit?.({ kind: "chunk", label: tag });
 
     const { files, warnings: w } = parseFileBlocks(out);
     warnings.push(...w);
@@ -167,6 +175,7 @@ export async function ingestSource(
     const fullPath = join(projectPath, relPath);
     const existing = existsSync(fullPath) ? readFileSync(fullPath, "utf-8") : null;
     const decision = await mergePage(existing, candidateContent, llm, {
+      beforeRequest: options.beforeRequest,
       fullRewriteMaxChars: options.mergeFullRewriteMaxChars,
     });
     if (decision.action === "skip") {
@@ -179,6 +188,7 @@ export async function ingestSource(
     writeFileSync(fullPath, decision.content, "utf-8");
     log.debug("写盘", { relPath, merged: existing != null, bytes: decision.content.length });
     written.push(relPath);
+    options.onUnit?.({ kind: decision.action === "write" && existing ? "merge" : "page", label: relPath });
   }
 
   if (written.length === 0) {

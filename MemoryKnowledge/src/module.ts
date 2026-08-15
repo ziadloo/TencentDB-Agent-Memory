@@ -166,12 +166,13 @@ export function createKnowledgeModule(config: KnowledgeModuleConfig): KnowledgeM
 
   // ── Real wiki worker: ingest via wiki engine ──
   const realWikiWorker: WikiWorker = async (ctx) => {
-    const { wikiId, serviceId, dir, setInternalStatus } = ctx;
+    const { wikiId, serviceId, dir, setInternalStatus, reportProgress, waitIfPaused } = ctx;
     setInternalStatus("ingesting");
 
     // Per-instance LLM routing (proxy/byo/global fallback), keyed by service_id.
     const effectiveLlm = resolveLlm(serviceId);
     wikiMgr.init({ name: wikiId, path: dir });
+    let completedUnits = 0;
     await wikiMgr.ingest(wikiId, {
       protocol: effectiveLlm.protocol,
       provider: effectiveLlm.provider,
@@ -180,12 +181,27 @@ export function createKnowledgeModule(config: KnowledgeModuleConfig): KnowledgeM
       customEndpoint: effectiveLlm.baseUrl,
       maxContextSize: effectiveLlm.maxTokens,
       timeoutMs: effectiveLlm.timeoutMs,
+    }, {
+      beforeRequest: async (label) => {
+        await waitIfPaused();
+        reportProgress({ stage: "ingesting", unit_kind: "chunk", current_label: label });
+      },
+      onUnit: (unit) => {
+        reportProgress({
+          stage: "ingesting",
+          completed_units: ++completedUnits,
+          unit_kind: unit.kind,
+          current_label: unit.label,
+        });
+      },
     });
     setInternalStatus("rebuilding-index");
+    reportProgress({ stage: "rebuilding-index", unit_kind: "index", current_label: "search index" });
 
     const pages = wikiMgr.getPages(wikiId);
     return { pageCount: pages.length };
   };
+
 
   // Services (shared BuildQueue for serial wiki + code tasks)
   const callbackConfig = config.tmcCallbackUrl

@@ -21,12 +21,15 @@ import {
   readdirSync,
   statSync,
   existsSync,
+  cpSync,
 } from "node:fs";
 
 import type {
   AuditAction,
   IKnowledgeStore,
   WikiRow,
+  WikiProgress,
+  WikiProgressStage,
   ListOpts,
   CountOpts,
 } from "./types.js";
@@ -50,6 +53,8 @@ export interface WikiBuildContext {
   name: string;
   dir: string;
   setInternalStatus: (s: string) => void;
+  reportProgress: (patch: Partial<WikiProgress> & { stage?: WikiProgressStage }) => void;
+  waitIfPaused: () => Promise<void>;
 }
 
 export interface WikiBuildResult {
@@ -68,6 +73,11 @@ export type IngestResult =
   | { kind: "ok"; row: WikiRow }
   | { kind: "not_found" }
   | { kind: "busy"; status: "pending" | "processing"; step: string | null };
+
+export type WikiControlResult =
+  | { kind: "ok"; row: WikiRow }
+  | { kind: "not_found" }
+  | { kind: "invalid"; message: string };
 
 export interface WikiServiceLogger {
   info?: (msg: string) => void;
@@ -217,6 +227,7 @@ export class WikiService {
    * Node 单线程，读写无并发）。清理收尾后移除。
    */
   private readonly cancelled = new Set<string>();
+  private readonly controls = new Map<string, { pause: boolean; stop: boolean }>();
 
   constructor(opts: WikiServiceOptions) {
     this.store = opts.store;
@@ -274,11 +285,26 @@ export class WikiService {
       return { kind: "busy", status: row.status, step: row.internal_status };
     }
     const nextVersion = row.version + 1;
+    const runId = `ingest-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const now = new Date().toISOString();
+    this.controls.set(wikiId, { pause: false, stop: false });
     this.store.updateWikiStatus(serviceId, wikiId, {
       status: "pending",
       internal_status: null,
       sync_error: null,
       version: nextVersion,
+      progress: {
+        run_id: runId,
+        stage: "scanning",
+        completed_units: 0,
+        total_units: null,
+        unit_kind: "source",
+        current_label: null,
+        started_at: now,
+        updated_at: now,
+        pause_requested: false,
+        stop_requested: false,
+      },
     });
     this.audit({ ...row, version: nextVersion }, "ingest", "manual ingest", requesterUserId);
     const fresh = this.store.getWiki(serviceId, teamId, wikiId);
@@ -298,6 +324,57 @@ export class WikiService {
   /** 按全局唯一 wiki_id 查询（仍按 service_id 收敛防跨租户）。spec id-only 端点专用。 */
   getById(serviceId: string, wikiId: string): WikiRow | null {
     return this.store.getWikiById(serviceId, wikiId);
+  }
+
+  pause(serviceId: string, wikiId: string): WikiControlResult {
+    const row = this.store.getWikiById(serviceId, wikiId);
+    if (!row) return { kind: "not_found" };
+    if (row.status !== "pending" && row.status !== "processing") return { kind: "invalid", message: "wiki is not ingesting" };
+    const control = this.controls.get(wikiId) ?? { pause: false, stop: false };
+    control.pause = true;
+    this.controls.set(wikiId, control);
+    this.updateProgress(serviceId, wikiId, { stage: "paused", pause_requested: true });
+    return { kind: "ok", row: this.store.getWikiById(serviceId, wikiId)! };
+  }
+
+  resume(serviceId: string, wikiId: string): WikiControlResult {
+    const row = this.store.getWikiById(serviceId, wikiId);
+    if (!row) return { kind: "not_found" };
+    const control = this.controls.get(wikiId);
+    if (!control || !control.pause) return { kind: "invalid", message: "wiki is not paused" };
+    control.pause = false;
+    this.controls.set(wikiId, control);
+    this.updateProgress(serviceId, wikiId, { stage: "ingesting", pause_requested: false });
+    return { kind: "ok", row: this.store.getWikiById(serviceId, wikiId)! };
+  }
+
+  stop(serviceId: string, wikiId: string): WikiControlResult {
+    const row = this.store.getWikiById(serviceId, wikiId);
+    if (!row) return { kind: "not_found" };
+    if (row.status !== "pending" && row.status !== "processing") return { kind: "invalid", message: "wiki is not ingesting" };
+    const control = this.controls.get(wikiId) ?? { pause: false, stop: false };
+    control.stop = true;
+    this.controls.set(wikiId, control);
+    this.updateProgress(serviceId, wikiId, { stage: "stopping", stop_requested: true });
+    return { kind: "ok", row: this.store.getWikiById(serviceId, wikiId)! };
+  }
+
+  private updateProgress(serviceId: string, wikiId: string, patch: Partial<WikiProgress>): void {
+    const row = this.store.getWikiById(serviceId, wikiId);
+    if (!row?.progress) return;
+    this.store.updateWikiStatus(serviceId, wikiId, {
+      progress: { ...row.progress, ...patch, updated_at: new Date().toISOString() },
+    });
+  }
+
+  private async waitIfPaused(serviceId: string, wikiId: string): Promise<void> {
+    for (;;) {
+      const control = this.controls.get(wikiId);
+      if (control?.stop) throw new Error("__WIKI_INGEST_STOP_REQUESTED__");
+      if (!control?.pause) return;
+      this.updateProgress(serviceId, wikiId, { stage: "paused", pause_requested: true });
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
   }
 
   list(serviceId: string, teamId: string, opts?: ListOpts): WikiRow[] {
@@ -1013,9 +1090,15 @@ export class WikiService {
       this.finishCancelled(serviceId, teamId, wikiId);
       return;
     }
+    const rowAtStart = this.store.getWikiById(serviceId, wikiId);
+    const runId = rowAtStart?.progress?.run_id ?? `ingest-${Date.now()}`;
+    const snapshotDir = join(this.dataRoot, ".wiki-ingest-snapshots", wikiId, runId);
+    const wikiDir = this.dirFor(serviceId, teamId, wikiId);
+    this.snapshotGeneratedState(wikiDir, snapshotDir);
     this.store.updateWikiStatus(serviceId, wikiId, {
       status: "processing",
       internal_status: "scanning",
+      progress: rowAtStart?.progress ? { ...rowAtStart.progress, stage: "scanning", updated_at: new Date().toISOString() } : null,
       sync_error: null,
     });
     try {
@@ -1024,10 +1107,26 @@ export class WikiService {
         serviceId,
         teamId,
         name,
-        dir: this.dirFor(serviceId, teamId, wikiId),
+        dir: wikiDir,
         setInternalStatus: (s) =>
           this.store.updateWikiStatus(serviceId, wikiId, { status: "processing", internal_status: s }),
+        reportProgress: (patch) => this.updateProgress(serviceId, wikiId, patch),
+        waitIfPaused: () => this.waitIfPaused(serviceId, wikiId),
       });
+      const control = this.controls.get(wikiId);
+      if (control?.stop) {
+        this.restoreGeneratedState(wikiId, wikiDir, snapshotDir);
+        this.store.updateWikiStatus(serviceId, wikiId, {
+          status: "failed",
+          internal_status: null,
+          sync_error: "Ingestion stopped; generated state was rolled back.",
+          progress: this.store.getWikiById(serviceId, wikiId)?.progress
+            ? { ...this.store.getWikiById(serviceId, wikiId)!.progress!, stage: "cancelled", updated_at: new Date().toISOString() }
+            : null,
+        });
+        this.controls.delete(wikiId);
+        return;
+      }
       // 结束前检查点：processing 期间被删 → 跳过 ready/audit/回调，幂等收尾清理。
       if (this.isDeleted(serviceId, wikiId)) {
         this.finishCancelled(serviceId, teamId, wikiId);
@@ -1039,6 +1138,9 @@ export class WikiService {
         sync_error: null,
         page_count: result?.pageCount ?? null,
         last_sync_at: new Date().toISOString(),
+        progress: this.store.getWikiById(serviceId, wikiId)?.progress
+          ? { ...this.store.getWikiById(serviceId, wikiId)!.progress!, stage: "ready", updated_at: new Date().toISOString(), current_label: null }
+          : null,
       });
       const synced = this.store.getWikiById(serviceId, wikiId);
       if (synced) {
@@ -1050,6 +1152,19 @@ export class WikiService {
       await this.onBuildComplete(synced, "ready", null);
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
+      const control = this.controls.get(wikiId);
+      if (control?.stop || msg === "__WIKI_INGEST_STOP_REQUESTED__") {
+        this.restoreGeneratedState(wikiId, wikiDir, snapshotDir);
+        this.store.updateWikiStatus(serviceId, wikiId, {
+          status: "failed",
+          internal_status: null,
+          sync_error: "Ingestion stopped; generated state was rolled back.",
+          progress: this.store.getWikiById(serviceId, wikiId)?.progress
+            ? { ...this.store.getWikiById(serviceId, wikiId)!.progress!, stage: "cancelled", updated_at: new Date().toISOString() }
+            : null,
+        });
+        return;
+      }
       // worker 抛错，但若期间已被删，视为取消而非失败：跳过 failed 状态/回调，做清理。
       if (this.isDeleted(serviceId, wikiId)) {
         this.finishCancelled(serviceId, teamId, wikiId);
@@ -1059,6 +1174,9 @@ export class WikiService {
         status: "failed",
         internal_status: null,
         sync_error: msg.slice(0, 500),
+        progress: this.store.getWikiById(serviceId, wikiId)?.progress
+          ? { ...this.store.getWikiById(serviceId, wikiId)!.progress!, stage: "failed", updated_at: new Date().toISOString() }
+          : null,
       });
       const failed = this.store.getWikiById(serviceId, wikiId);
       if (failed) this.audit(failed, "failed", msg.slice(0, 500));
@@ -1066,7 +1184,30 @@ export class WikiService {
 
       // Callback TMC about failure
       await this.onBuildComplete(failed, "failed", msg);
+    } finally {
+      this.controls.delete(wikiId);
+      try { rmSync(snapshotDir, { recursive: true, force: true }); } catch { /* cleanup is best effort */ }
     }
+  }
+
+  private snapshotGeneratedState(projectDir: string, snapshotDir: string): void {
+    mkdirSync(snapshotDir, { recursive: true });
+    const wikiDir = join(projectDir, "wiki");
+    if (existsSync(wikiDir)) cpSync(wikiDir, join(snapshotDir, "wiki"), { recursive: true });
+    const indexDb = join(projectDir, "index.db");
+    if (existsSync(indexDb)) cpSync(indexDb, join(snapshotDir, "index.db"));
+  }
+
+  private restoreGeneratedState(wikiId: string, projectDir: string, snapshotDir: string): void {
+    evictWikiDb(wikiId);
+    const wikiDir = join(projectDir, "wiki");
+    const savedWiki = join(snapshotDir, "wiki");
+    if (existsSync(savedWiki)) {
+      rmSync(wikiDir, { recursive: true, force: true });
+      cpSync(savedWiki, wikiDir, { recursive: true });
+    }
+    const savedDb = join(snapshotDir, "index.db");
+    if (existsSync(savedDb)) cpSync(savedDb, join(projectDir, "index.db"));
   }
 
   /**

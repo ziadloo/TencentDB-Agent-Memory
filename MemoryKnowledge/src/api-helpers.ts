@@ -108,6 +108,7 @@ export interface WikiDetail {
   last_sync_at: string | null;
   created_at: string;
   updated_at: string;
+  progress: WikiRow["progress"];
 }
 
 export function toWikiDetail(row: WikiRow): WikiDetail {
@@ -126,6 +127,7 @@ export function toWikiDetail(row: WikiRow): WikiDetail {
     last_sync_at: row.last_sync_at,
     created_at: row.created_at,
     updated_at: row.updated_at,
+    progress: row.progress,
   };
 }
 

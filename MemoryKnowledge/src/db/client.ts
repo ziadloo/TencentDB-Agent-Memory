@@ -94,6 +94,7 @@ export function migrate(_db: Db, raw: Database.Database): void {
       visibility      TEXT NOT NULL DEFAULT 'team',
       status          TEXT NOT NULL DEFAULT 'draft',
       internal_status TEXT,
+      progress_json  TEXT,
       sync_error      TEXT,
       page_count      INTEGER,
       version         INTEGER NOT NULL DEFAULT 0,
@@ -151,6 +152,10 @@ export function migrate(_db: Db, raw: Database.Database): void {
       updated_at     TEXT NOT NULL
     );
   `);
+
+  // CREATE TABLE above covers new databases. Existing deployments need the
+  // additive column; SQLite has no portable IF NOT EXISTS for ALTER COLUMN.
+  try { raw.exec("ALTER TABLE knowledge_wiki ADD COLUMN progress_json TEXT"); } catch { /* already present */ }
 
   // Column migrations — SQLite ALTER TABLE ADD COLUMN is not idempotent,
   // so we check PRAGMA table_info first.

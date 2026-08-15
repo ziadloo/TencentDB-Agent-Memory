@@ -28,6 +28,7 @@ export interface MergeOptions {
    * 否则走整页重写（质量优先）。默认 4000。
    */
   fullRewriteMaxChars?: number;
+  beforeRequest?: (label: string) => Promise<void> | void;
 }
 
 /** 旧页正文超过此长度切到追加模式。 */
@@ -99,12 +100,12 @@ export async function mergePage(
 
   // OQ-1 优化②：大页走追加模式，省 output token 且不丢旧事实。
   if (oldParsed.body.length > threshold) {
-    const merged = await appendMerge(oldParsed, candParsed.body, union, llm);
+    const merged = await appendMerge(oldParsed, candParsed.body, union, llm, options.beforeRequest);
     return { action: "write", content: merged };
   }
 
   // 小页 → 整页重写（质量优先）。
-  const merged = await rewriteMerge(existingContent, candidateContent, llm);
+  const merged = await rewriteMerge(existingContent, candidateContent, llm, options.beforeRequest);
   return { action: "write", content: merged };
 }
 
@@ -131,6 +132,7 @@ async function rewriteMerge(
   existingContent: string,
   candidateContent: string,
   llm: LlmClient,
+  beforeRequest?: (label: string) => Promise<void> | void,
 ): Promise<string> {
   const prompt = `## Existing page (preserve its facts)
 \`\`\`
@@ -144,6 +146,7 @@ ${candidateContent}
 
 Output the merged complete page.`;
 
+  await beforeRequest?.("merge-rewrite");
   const out = await llm.chat({ system: MERGE_SYSTEM, prompt, label: "merge-rewrite" });
 
   // 兜底：若 LLM 返回空或无 frontmatter，退回候选页，避免丢页。
@@ -166,6 +169,7 @@ async function appendMerge(
   candidateBody: string,
   union: string[],
   llm: LlmClient,
+  beforeRequest?: (label: string) => Promise<void> | void,
 ): Promise<string> {
   const prompt = `## Existing page body
 ${oldParsed.body}
@@ -175,6 +179,7 @@ ${candidateBody}
 
 Output only the incremental information not already in the existing page. If nothing is new, output an empty string.`;
 
+  await beforeRequest?.("merge-append");
   const fragment = (await llm.chat({ system: APPEND_SYSTEM, prompt, label: "merge-append" })).trim();
 
   // 无新增 → 仅更新 sources 并集，正文不变。

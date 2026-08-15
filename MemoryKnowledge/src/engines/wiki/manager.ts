@@ -114,7 +114,12 @@ export interface WikiSourceManager {
   readPage(name: string, relPath: string): string | null;
   getPages(name: string): WikiPage[];
   init(config: WikiSourceConfig): WikiSourceState;
-  ingest(name: string, llmConfig: any): Promise<any[]>;
+  ingest(name: string, llmConfig: any, hooks?: WikiIngestHooks): Promise<any[]>;
+}
+
+export interface WikiIngestHooks {
+  beforeRequest?: (label: string) => Promise<void> | void;
+  onUnit?: (unit: { kind: "source" | "chunk" | "page" | "merge" | "index"; label: string }) => void;
 }
 
 /** 图谱中不参与建边/展示的页类型（如内部 query 页）。 */
@@ -510,6 +515,7 @@ async function runIngestIncremental(
   projectPath: string,
   oldStates: Map<string, { sha256: string; status: SourceStatus }>,
   llmConfig: any,
+  hooks: WikiIngestHooks = {},
 ): Promise<IngestOutcome> {
   const { ingestSource } = await import("./ingest-v2/index.js");
   const sourcesDir = join(projectPath, "raw", "sources");
@@ -547,8 +553,13 @@ async function runIngestIncremental(
     try {
       const written = await withSpan("ingest-source", async (span) => {
         span.setAttribute("source.name", d.filename);
-        return ingestSource(projectPath, d.abs, llmConfig);
+        await hooks.beforeRequest?.(`source:${d.filename}`);
+        return ingestSource(projectPath, d.abs, llmConfig, {
+          beforeRequest: hooks.beforeRequest,
+          onUnit: hooks.onUnit,
+        });
       });
+      hooks.onUnit?.({ kind: "source", label: d.filename });
       log.info("runIngest 单源完成", { source: d.filename, written: written.length, ms: Date.now() - t0 });
       results.push({ source: d.filename, filesWritten: written, error: null });
       processed.push({ filename: d.filename, sha256: d.sha256, size: d.size, ok: true, error: null });
@@ -786,7 +797,7 @@ export function createWikiSourceManager(dataDir: string): WikiSourceManager {
     return register(config);
   }
 
-  async function ingest(name: string, llmConfig: any): Promise<any[]> {
+  async function ingest(name: string, llmConfig: any, hooks: WikiIngestHooks = {}): Promise<any[]> {
     const state = sources.get(name);
     if (!state) throw new Error(`Not found: ${name}`);
     const projectPath = state.path;
@@ -802,7 +813,7 @@ export function createWikiSourceManager(dataDir: string): WikiSourceManager {
 
     const outcome = await withSpan("wiki-ingest", async (span) => {
       span.setAttribute("wiki.name", name);
-      return runIngestIncremental(projectPath, oldStates, llmConfig);
+      return runIngestIncremental(projectPath, oldStates, llmConfig, hooks);
     });
 
     // 重建索引 + 登记 source 状态 + 删已删源行：**同一写事务**（设计 003 §3.6 step 6，强一致）。
@@ -815,6 +826,7 @@ export function createWikiSourceManager(dataDir: string): WikiSourceManager {
         for (const p of outcome.processed) recordSourceIngestResult(db, p);
         if (outcome.deletedSources.length > 0) deleteSources(db, outcome.deletedSources);
       });
+      hooks.onUnit?.({ kind: "index", label: "search index" });
       evictWikiDb(name); // 丢弃可能持旧快照的读连接
 
       const attempted = outcome.processed.length;
