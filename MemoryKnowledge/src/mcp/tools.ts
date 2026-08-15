@@ -17,13 +17,16 @@ export interface McpToolDef {
     type: "object";
     properties: Record<string, unknown>;
     required: string[];
+    additionalProperties?: boolean;
   };
   /** HTTP endpoint to forward to (without /v3 prefix). */
-  endpoint: string;
+  endpoint?: string;
   /** Backend API to call. Existing tools default to the Knowledge Service. */
   backend?: "knowledge" | "core";
   /** Destructive tools require an explicit confirmation field. */
   destructive?: boolean;
+  /** High-level harness workflow implemented by the MCP bridge. */
+  workflow?: string;
 }
 
 export const MCP_TOOLS: McpToolDef[] = [
@@ -233,6 +236,7 @@ export const MCP_TOOLS: McpToolDef[] = [
 
   // ── Workspace discovery ──
   ...workspaceTools(),
+  ...workbenchTools(),
 ];
 
 function payloadSchema() {
@@ -316,5 +320,210 @@ function workspaceTools(): McpToolDef[] {
     coreTool("workspace_list_tasks", "List tasks visible to the authenticated user.", "/v3/meta/task/list"),
     coreTool("workspace_list_assets", "List assets accessible to the authenticated user.", "/v3/meta/asset/list-accessible"),
     coreTool("workspace_list_agent_assets", "List fixed assets assigned to an explicitly identified agent.", "/v3/meta/agent-fixed-asset/list-with-detail"),
+  ];
+}
+
+function workbenchTools(): McpToolDef[] {
+  const context = {
+    type: "object" as const,
+    properties: {
+      team_id: { type: "string", description: "Team to use for this harness session." },
+      agent_id: { type: "string", description: "Agent whose workbench the harness is operating." },
+      task_id: { type: "string", description: "Optional task context." },
+    },
+    required: ["team_id", "agent_id"],
+    additionalProperties: false,
+  };
+
+  return [
+    {
+      name: "workbench_context_get",
+      description: "Get the active team, agent, user, and task context for this MCP session.",
+      inputSchema: { type: "object", properties: {}, additionalProperties: false, required: [] },
+      workflow: "context_get",
+    },
+    {
+      name: "workbench_context_set",
+      description: "Set and validate the active team and agent context for subsequent harness workflows.",
+      inputSchema: context,
+      workflow: "context_set",
+    },
+    {
+      name: "workbench_context_clear",
+      description: "Clear the active harness workbench context.",
+      inputSchema: { type: "object", properties: {}, additionalProperties: false, required: [] },
+      workflow: "context_clear",
+    },
+    {
+      name: "workbench_capabilities",
+      description: "Describe the high-level harness workflows and supported resource types available to this MCP deployment.",
+      inputSchema: { type: "object", properties: {}, additionalProperties: false, required: [] },
+      workflow: "capabilities",
+    },
+    {
+      name: "recall_context",
+      description: "Return a bounded, ranked context packet from memory and accessible knowledge assets for the active agent workbench.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          query: { type: "string", description: "Question, task, or topic to recall." },
+          limit: { type: "integer", minimum: 1, maximum: 50, description: "Maximum results per source." },
+          include_assets: { type: "boolean", description: "Include accessible Wiki, CodeGraph, Skill, and Chat Memory asset metadata." },
+        },
+        required: ["query"],
+        additionalProperties: false,
+      },
+      workflow: "recall_context",
+    },
+    {
+      name: "record_decision",
+      description: "Save a durable, provenance-bearing decision into the active agent Chat Memory asset.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          decision: { type: "string", description: "Decision text." },
+          rationale: { type: "string", description: "Optional rationale and tradeoffs." },
+          source_ref: { type: "string", description: "Optional repository, task, or conversation reference." },
+          session_id: { type: "string", description: "Optional source session; defaults to the MCP session." },
+        },
+        required: ["decision"],
+        additionalProperties: false,
+      },
+      workflow: "record_decision",
+    },
+    {
+      name: "import_conversation",
+      description: "Import conversation messages into the active GUI-visible Chat Memory asset and return the ingestion result.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          session_id: { type: "string", description: "Source conversation/session identifier." },
+          messages: {
+            type: "array",
+            description: "Conversation messages in chronological order.",
+            items: {
+              type: "object",
+              properties: {
+                role: { type: "string", enum: ["user", "assistant", "system", "tool_call", "tool_result"] },
+                content: { type: "string" },
+              },
+              required: ["role", "content"],
+              additionalProperties: false,
+            },
+          },
+        },
+        required: ["session_id", "messages"],
+        additionalProperties: false,
+      },
+      workflow: "import_conversation",
+    },
+    {
+      name: "asset_list",
+      description: "List accessible assets in the active team and agent workbench.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          asset_type: { type: "string", enum: ["skill", "llm_wiki", "code_graph", "chat_memory"] },
+          status: { type: "string", enum: ["draft", "candidate", "approved", "deprecated", "archived", "failed"] },
+          limit: { type: "integer", minimum: 1, maximum: 1000 },
+          offset: { type: "integer", minimum: 0 },
+        },
+        additionalProperties: false,
+        required: [],
+      },
+      workflow: "asset_list",
+    },
+    {
+      name: "asset_get",
+      description: "Read a GUI-visible asset and its current lifecycle metadata in the active workbench.",
+      inputSchema: {
+        type: "object",
+        properties: { asset_id: { type: "string" } },
+        required: ["asset_id"],
+        additionalProperties: false,
+      },
+      workflow: "asset_get",
+    },
+    {
+      name: "asset_update",
+      description: "Update mutable metadata for an owned asset in the active workbench.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          asset_id: { type: "string" },
+          name: { type: "string" },
+          description: { type: "string" },
+          source_ref: { type: "string" },
+        },
+        required: ["asset_id"],
+        additionalProperties: false,
+      },
+      workflow: "asset_update",
+    },
+    {
+      name: "asset_bind",
+      description: "Bind an accessible asset to the active agent so it becomes part of the agent workbench.",
+      inputSchema: {
+        type: "object",
+        properties: { asset_id: { type: "string" }, injection_mode: { type: "string", enum: ["direct", "summary", "tool", "reference"] }, priority: { type: "integer" } },
+        required: ["asset_id"],
+        additionalProperties: false,
+      },
+      workflow: "asset_bind",
+    },
+    {
+      name: "asset_unbind",
+      description: "Remove an asset from the active agent workbench after explicit confirmation.",
+      inputSchema: {
+        type: "object",
+        properties: { asset_id: { type: "string" }, confirm: { type: "boolean" } },
+        required: ["asset_id", "confirm"],
+        additionalProperties: false,
+      },
+      destructive: true,
+      workflow: "asset_unbind",
+    },
+    {
+      name: "asset_stage",
+      description: "Create a draft GUI-visible Skill, Wiki, or CodeGraph asset with provenance in the active workbench.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          type: { type: "string", enum: ["skill", "llm_wiki", "code_graph"] },
+          name: { type: "string" },
+          description: { type: "string" },
+          source_ref: { type: "string" },
+          content: { type: "string", description: "Skill markdown or Wiki source content." },
+          repo_url: { type: "string", description: "Repository URL for CodeGraph assets." },
+          branch: { type: "string" },
+        },
+        required: ["type", "name"],
+        additionalProperties: false,
+      },
+      workflow: "asset_stage",
+    },
+    {
+      name: "asset_publish",
+      description: "Publish a staged asset after explicit confirmation; published assets become eligible for agent use.",
+      inputSchema: {
+        type: "object",
+        properties: { asset_id: { type: "string" }, confirm: { type: "boolean" } },
+        required: ["asset_id", "confirm"],
+        additionalProperties: false,
+      },
+      destructive: true,
+      workflow: "asset_publish",
+    },
+    {
+      name: "asset_job_status",
+      description: "Get readiness and failure details for an asynchronous Wiki or CodeGraph asset.",
+      inputSchema: {
+        type: "object",
+        properties: { asset_id: { type: "string" } },
+        required: ["asset_id"],
+        additionalProperties: false,
+      },
+      workflow: "asset_job_status",
+    },
   ];
 }

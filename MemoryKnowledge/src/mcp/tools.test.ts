@@ -13,6 +13,10 @@ describe("MCP workspace tool registry", () => {
       "memory_conversation_search",
       "skill_search",
       "workspace_list_teams",
+      "workbench_context_set",
+      "recall_context",
+      "import_conversation",
+      "asset_stage",
     ]));
   });
 
@@ -32,5 +36,12 @@ describe("MCP workspace tool registry", () => {
 
     expect(tool?.backend).toBe("core");
     expect(tool?.inputSchema.required).toEqual(["payload"]);
+  });
+
+  it("exposes workflow tools without pretending they are raw backend endpoints", () => {
+    const tool = MCP_TOOLS.find((candidate) => candidate.name === "recall_context");
+    expect(tool?.workflow).toBe("recall_context");
+    expect(tool?.backend).toBeUndefined();
+    expect(tool?.inputSchema.required).toEqual(["query"]);
   });
 });

@@ -20,6 +20,7 @@ import {
 
 import { MCP_TOOLS, type McpToolDef } from "./tools.js";
 import { callApi, type HttpClientOptions } from "./http-client.js";
+import { WorkbenchRuntime } from "./workbench.js";
 import { createLogger } from "../logger.js";
 
 const log = createLogger("mcp-server");
@@ -29,11 +30,12 @@ export function createMcpServer(httpOpts: HttpClientOptions): Server {
   // remote HTTP bridge opts into Core tools by providing coreBaseUrl.
   const tools = httpOpts.coreBaseUrl
     ? MCP_TOOLS
-    : MCP_TOOLS.filter((tool) => tool.backend !== "core");
+    : MCP_TOOLS.filter((tool) => tool.backend !== "core" && !tool.workflow);
   const toolMap = new Map<string, McpToolDef>();
   for (const tool of tools) {
     toolMap.set(tool.name, tool);
   }
+  const workbench = httpOpts.coreBaseUrl ? new WorkbenchRuntime(httpOpts) : undefined;
 
   const server = new Server(
     { name: "knowledge-mcp", version: "0.1.0" },
@@ -49,7 +51,7 @@ export function createMcpServer(httpOpts: HttpClientOptions): Server {
         inputSchema: t.inputSchema,
         annotations: t.destructive
           ? { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false }
-          : { readOnlyHint: !t.backend || !t.name.includes("add") && !t.name.includes("write") && !t.name.includes("update") && !t.name.includes("patch") && !t.name.includes("create") && !t.name.includes("extract"), destructiveHint: false, openWorldHint: false },
+          : { readOnlyHint: t.workflow ? ["context_get", "capabilities", "recall_context", "asset_list", "asset_job_status"].includes(t.workflow) : !t.backend || !t.name.includes("add") && !t.name.includes("write") && !t.name.includes("update") && !t.name.includes("patch") && !t.name.includes("create") && !t.name.includes("extract"), destructiveHint: false, openWorldHint: false },
       })),
     };
   });
@@ -67,6 +69,28 @@ export function createMcpServer(httpOpts: HttpClientOptions): Server {
     }
 
     const rawArgs = (args ?? {}) as Record<string, unknown>;
+    if (tool.workflow) {
+      if (!workbench) {
+        return {
+          content: [{ type: "text", text: "Error: workbench workflows require the remote MCP Core backend" }],
+          isError: true,
+        };
+      }
+      try {
+        const result = await workbench.invoke(tool.workflow, rawArgs);
+        return {
+          content: [{ type: "text", text: JSON.stringify(result.data, null, 2) }],
+          isError: Boolean(result.isError),
+        };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        log.error(`workflow ${tool.workflow} failed: ${msg}`);
+        return {
+          content: [{ type: "text", text: `Error: ${msg}` }],
+          isError: true,
+        };
+      }
+    }
     const body = tool.backend === "core"
       ? (rawArgs.payload as Record<string, unknown> | undefined)
       : rawArgs;
@@ -83,6 +107,7 @@ export function createMcpServer(httpOpts: HttpClientOptions): Server {
       };
     }
     try {
+      if (!tool.endpoint) throw new Error(`Tool ${tool.name} has no backend endpoint`);
       const backendOpts = tool.backend === "core"
         ? { ...httpOpts, baseUrl: httpOpts.coreBaseUrl ?? httpOpts.baseUrl, token: httpOpts.coreToken ?? httpOpts.token }
         : httpOpts;

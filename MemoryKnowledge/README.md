@@ -86,6 +86,27 @@ KNOWLEDGE_SERVICE_URL=http://127.0.0.1:8421
 `LLM_MODE=proxy`（默认）：Wiki 用 Panel 按 `x-tdai-service-id` 推送的 `llm_binding`，本地不必起 Proxy。  
 `LLM_MODE=custom`：在 `.env` 设 `LLM_API_KEY` / `LLM_BASE_URL`（及可选 `LLM_PROTOCOL=anthropic`）。
 
+## Harness Workbench MCP
+
+The remote MCP exposes a high-level workbench for agent harnesses. It is
+enabled when the MCP bridge has `MEMORY_CORE_API_URL` configured (the HTTP
+deployment enables this automatically). A harness should establish context
+before durable operations:
+
+1. Call `workbench_context_set` with an authorized `team_id` and `agent_id`.
+2. Use `recall_context` to obtain a bounded packet across memory and accessible
+   Wiki/CodeGraph assets.
+3. Use `record_decision` or `import_conversation` for durable Chat Memory.
+4. Use `asset_stage` for draft Skill, Wiki, or CodeGraph assets, then
+   `asset_publish` with explicit confirmation when they are ready.
+
+MCP-created durable resources are registered as GUI-visible assets and bound
+to the active agent. Wiki and CodeGraph creation may return a processing
+status; use `asset_job_status` before relying on the resource for retrieval.
+The lower-level resource tools remain available for compatibility, but new
+harness integrations should prefer the `workbench_*`, `recall_*`, and
+`asset_*` workflows.
+
 ## 常用命令
 
 ```bash

@@ -44,7 +44,10 @@ export function accessLog(): MiddlewareHandler {
       try {
         const raw = await c.req.text();
         reqBody = raw ? JSON.parse(raw) : undefined;
-        c.req.bodyCache.text = Promise.resolve(raw);
+        // Hono's runtime expects cached bodies to be thenable, while the
+        // installed declaration types text as string. Preserve the runtime
+        // contract and isolate the dependency's declaration mismatch here.
+        c.req.bodyCache.text = Promise.resolve(raw) as unknown as string;
         if (reqBody) c.req.bodyCache.json = Promise.resolve(reqBody);
       } catch {
         // 非 JSON body，忽略
