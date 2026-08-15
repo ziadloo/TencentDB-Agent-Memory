@@ -581,6 +581,84 @@
   color: var(--tea-color-text-tertiary);
 }
 
+._wiki-detail-graph-empty-help {
+  max-width: 190px;
+  color: var(--tea-color-text-tertiary);
+  font-size: 11px;
+  line-height: 1.5;
+  text-align: center;
+}
+
+._wiki-detail-graph-facts {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--tea-color-border-secondary-default);
+  background: var(--tea-color-bg-secondary-default);
+}
+
+._wiki-detail-graph-facts-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  color: var(--tea-color-text-tertiary);
+  font-size: 11px;
+}
+
+._wiki-detail-graph-facts-grid strong {
+  color: var(--tea-color-text-primary);
+  font-size: 13px;
+}
+
+._wiki-detail-graph-path {
+  overflow: hidden;
+  color: var(--tea-color-text-tertiary);
+  font-family: monospace;
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+._wiki-detail-graph-facts p {
+  margin: 0;
+  color: var(--tea-color-text-secondary);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+._wiki-detail-graph-related {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-top: 2px;
+}
+
+._wiki-detail-graph-related-title {
+  color: var(--tea-color-text-tertiary);
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+._wiki-detail-graph-related-item {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  overflow: hidden;
+  color: var(--tea-color-text-secondary);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+._wiki-detail-graph-related-direction {
+  width: 12px;
+  flex: 0 0 12px;
+  color: var(--tea-color-text-tertiary);
+  text-align: center;
+}
+
 ._wiki-detail-type-filter {
   display: flex;
   flex-wrap: wrap;

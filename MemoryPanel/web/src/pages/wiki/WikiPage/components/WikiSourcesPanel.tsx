@@ -420,6 +420,7 @@ export default function WikiSourcesPanel() {
   const [graphData, setGraphData] = useState<GraphData | null>(null);
   const [graphLoading, setGraphLoading] = useState(false);
   const [selectedPage, setSelectedPage] = useState<WikiPage | null>(null);
+  const [selectedGraphNode, setSelectedGraphNode] = useState<GraphNode | null>(null);
   const [readContent, setReadContent] = useState('');
   const [readLoading, setReadLoading] = useState(false);
   const [pageTypeFilter, setPageTypeFilter] = useState('all');
@@ -483,6 +484,7 @@ export default function WikiSourcesPanel() {
     setSelectedWikiId('');
     setActiveTab('overview');
     setSelectedPage(null);
+    setSelectedGraphNode(null);
     setSearchQuery('');
     setSearchResults([]);
     setPageTypeFilter('all');
@@ -698,6 +700,7 @@ export default function WikiSourcesPanel() {
     setSelectedWikiId(wikiId);
     setActiveTab('overview');
     setSelectedPage(null);
+    setSelectedGraphNode(null);
     setSearchQuery('');
     setSearchResults([]);
     setPageTypeFilter('all');
@@ -1362,16 +1365,21 @@ export default function WikiSourcesPanel() {
               graphData={graphData}
               graphLoading={graphLoading}
               selectedPage={selectedPage}
+              selectedGraphNode={selectedGraphNode}
               readLoading={readLoading}
               displayContent={displayContent}
               metadata={metadata}
               onNodeClick={(node) => {
+                setSelectedGraphNode(node);
                 const page =
                   pages.find((item) => ((item as any).id || item.path) === node.id) ||
                   ({ path: node.id, title: node.label, type: node.type } as WikiPage);
                 handleReadPage(page);
               }}
-              onClearSelection={() => setSelectedPage(null)}
+              onClearSelection={() => {
+                setSelectedPage(null);
+                setSelectedGraphNode(null);
+              }}
             />
           </TabPanel>
           <TabPanel id="pages">
@@ -2028,6 +2036,7 @@ function GraphTabContent({
   graphData,
   graphLoading,
   selectedPage,
+  selectedGraphNode,
   readLoading,
   displayContent,
   metadata,
@@ -2037,6 +2046,7 @@ function GraphTabContent({
   graphData: GraphData | null;
   graphLoading: boolean;
   selectedPage: WikiPage | null;
+  selectedGraphNode: GraphNode | null;
   readLoading: boolean;
   displayContent: string;
   metadata: Record<string, string> | null;
@@ -2045,6 +2055,19 @@ function GraphTabContent({
 }) {
   const { t } = useTranslation();
   const { width: rightW, onMouseDown } = useResizable(320, 200, 500, 'right');
+  const relatedNodes = useMemo(() => {
+    if (!selectedGraphNode || !graphData) return [];
+    const byId = new Map(graphData.nodes.map((node) => [node.id, node]));
+    const related = new Map<string, { node: GraphNode; direction: 'in' | 'out' | 'both' }>();
+    for (const edge of graphData.edges) {
+      if (edge.source !== selectedGraphNode.id && edge.target !== selectedGraphNode.id) continue;
+      const otherId = edge.source === selectedGraphNode.id ? edge.target : edge.source;
+      const direction = edge.source === selectedGraphNode.id ? 'out' : 'in';
+      const existing = related.get(otherId);
+      related.set(otherId, { node: byId.get(otherId)!, direction: existing && existing.direction !== direction ? 'both' : direction });
+    }
+    return [...related.values()].filter((item): item is { node: GraphNode; direction: 'in' | 'out' | 'both' } => Boolean(item.node)).sort((a, b) => b.node.linkCount - a.node.linkCount).slice(0, 8);
+  }, [graphData, selectedGraphNode]);
 
   return (
     <div
@@ -2085,6 +2108,29 @@ function GraphTabContent({
                     ))}
               </div>
             )}
+            {selectedGraphNode && (
+              <div className="_wiki-detail-graph-facts">
+                <div className="_wiki-detail-graph-facts-grid">
+                  <span><strong>{selectedGraphNode.linkCount}</strong> links</span>
+                  <span><strong>{selectedGraphNode.inboundLinkCount ?? 0}</strong> in</span>
+                  <span><strong>{selectedGraphNode.outboundLinkCount ?? 0}</strong> out</span>
+                  <span><strong>{selectedGraphNode.community}</strong> community</span>
+                </div>
+                <div className="_wiki-detail-graph-path">{selectedGraphNode.path}</div>
+                {selectedGraphNode.snippet && <p>{selectedGraphNode.snippet}</p>}
+                {relatedNodes.length > 0 && (
+                  <div className="_wiki-detail-graph-related">
+                    <span className="_wiki-detail-graph-related-title">Connected pages</span>
+                    {relatedNodes.map(({ node, direction }) => (
+                      <div key={node.id} className="_wiki-detail-graph-related-item">
+                        <span className="_wiki-detail-graph-related-direction">{direction === 'both' ? '↔' : direction === 'out' ? '→' : '←'}</span>
+                        <span title={node.path}>{node.label}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
             <div className="_wiki-detail-side-content">
               {readLoading ? (
                 <StatusTip status="loading" />
@@ -2099,6 +2145,7 @@ function GraphTabContent({
           <div className="_wiki-detail-side-empty">
             <ArchitectureIcon size="large" />
             <Text theme="label">{t('wiki.detail.graph.clickToView')}</Text>
+            <span className="_wiki-detail-graph-empty-help">Search, hover, or click a node to focus its neighborhood.</span>
           </div>
         )}
       </div>

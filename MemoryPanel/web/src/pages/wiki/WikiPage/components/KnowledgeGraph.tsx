@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback, useMemo, type CSSProperties } from "react";
+import { useEffect, useState, useCallback, useMemo, useRef, type CSSProperties } from "react";
 import { useTranslation } from "react-i18next";
 import Graph from "graphology";
 import { SigmaContainer, useLoadGraph, useRegisterEvents, useSigma } from "@react-sigma/core";
@@ -9,6 +9,7 @@ import { SearchIcon, CloseIcon } from 'tea-icons-react';
 // --- Types (re-exported from knowledge-api) ---
 export interface GraphNode {
   id: string; label: string; type: string; path: string; linkCount: number; community: number;
+  snippet?: string; inboundLinkCount?: number; outboundLinkCount?: number;
 }
 export interface GraphEdge { source: string; target: string; weight: number; }
 export interface GraphData {
@@ -101,6 +102,11 @@ function ns(linkCount: number, maxLinks: number, nodeCount: number): number {
   return (BASE_NODE_SIZE + Math.pow(r, 0.6) * (MAX_NODE_SIZE - BASE_NODE_SIZE)) * s;
 }
 function layoutIter(n: number): number { return n > 2500 ? 28 : n > 1200 ? 40 : n > 600 ? 65 : n > 250 ? 90 : 140; }
+function stableCoordinate(id: string, axis: number): number {
+  let hash = axis === 0 ? 2166136261 : 16777619;
+  for (let i = 0; i < id.length; i += 1) hash = Math.imul(hash ^ id.charCodeAt(i), 16777619);
+  return ((hash >>> 0) % 10000) / 100;
+}
 
 // --- Graph Loader ---
 function GraphLoader({ nodes, edges, colorMode, onNodeClick, highlightNode, palette }: {
@@ -111,6 +117,8 @@ function GraphLoader({ nodes, edges, colorMode, onNodeClick, highlightNode, pale
   const sigma = useSigma();
   const registerEvents = useRegisterEvents();
   const [hovered, setHovered] = useState<{ node: string; neighbors: Set<string> } | null>(null);
+  const draggedNode = useRef<string | null>(null);
+  const positions = useRef(new Map<string, { x: number; y: number }>());
 
   useEffect(() => {
     const graph = new Graph();
@@ -119,7 +127,8 @@ function GraphLoader({ nodes, edges, colorMode, onNodeClick, highlightNode, pale
       const color = colorMode === "community"
         ? palette.communityColors[node.community % palette.communityColors.length]
         : nc(node.type, palette);
-      graph.addNode(node.id, { x: Math.random() * 100, y: Math.random() * 100, size: ns(node.linkCount, maxLinks, nodes.length), color, label: node.label });
+      const position = positions.current.get(node.id) || { x: stableCoordinate(node.id, 0), y: stableCoordinate(node.id, 1) };
+      graph.addNode(node.id, { x: position.x, y: position.y, size: ns(node.linkCount, maxLinks, nodes.length), color, label: node.label });
     }
     const maxW = Math.max(...edges.map((e) => e.weight), 1);
     for (const edge of edges) {
@@ -132,8 +141,12 @@ function GraphLoader({ nodes, edges, colorMode, onNodeClick, highlightNode, pale
         }
       }
     }
-    const settings = forceAtlas2.inferSettings(graph);
-    forceAtlas2.assign(graph, { iterations: layoutIter(nodes.length), settings: { ...settings, gravity: 1.2, scalingRatio: nodes.length > 400 ? 3.5 : 2.5, strongGravityMode: true, barnesHutOptimize: nodes.length > 50 } });
+    const hasUnpositionedNode = nodes.some((node) => !positions.current.has(node.id));
+    if (hasUnpositionedNode) {
+      const settings = forceAtlas2.inferSettings(graph);
+      forceAtlas2.assign(graph, { iterations: layoutIter(nodes.length), settings: { ...settings, gravity: 1.2, scalingRatio: nodes.length > 400 ? 3.5 : 2.5, strongGravityMode: true, barnesHutOptimize: nodes.length > 50 } });
+      graph.forEachNode((id, attributes) => positions.current.set(id, { x: attributes.x, y: attributes.y }));
+    }
     loadGraph(graph);
     sigma.refresh();
   }, [nodes, edges, colorMode, loadGraph, palette, sigma]);
@@ -143,31 +156,72 @@ function GraphLoader({ nodes, edges, colorMode, onNodeClick, highlightNode, pale
       enterNode: (e) => { const g = sigma.getGraph(); setHovered({ node: e.node, neighbors: new Set(g.neighbors(e.node)) }); const c = sigma.getContainer(); if (c) c.style.cursor = "pointer"; },
       leaveNode: () => { setHovered(null); const c = sigma.getContainer(); if (c) c.style.cursor = "default"; },
       clickNode: (e) => { const n = nodes.find((n) => n.id === e.node); if (n && onNodeClick) onNodeClick(n); },
+      downNode: (e) => {
+        draggedNode.current = e.node;
+        e.preventSigmaDefault();
+        const c = sigma.getContainer();
+        if (c) c.style.cursor = "grabbing";
+      },
+      mousemovebody: (e) => {
+        if (!draggedNode.current) return;
+        const position = sigma.viewportToGraph(e);
+        sigma.getGraph().setNodeAttribute(draggedNode.current, "x", position.x);
+        sigma.getGraph().setNodeAttribute(draggedNode.current, "y", position.y);
+        positions.current.set(draggedNode.current, position);
+        e.preventSigmaDefault();
+        sigma.refresh({ partialGraph: { nodes: [draggedNode.current] } });
+      },
+      mouseup: () => {
+        draggedNode.current = null;
+        const c = sigma.getContainer();
+        if (c) c.style.cursor = "default";
+      },
     });
   }, [registerEvents, sigma, nodes, onNodeClick]);
 
   useEffect(() => {
+    const focusNode = highlightNode && sigma.getGraph().hasNode(highlightNode) ? highlightNode : null;
+    const focusNeighbors = focusNode ? new Set(sigma.getGraph().neighbors(focusNode)) : null;
+    const labelNodes = new Set(
+      nodes
+        .slice()
+        .sort((a, b) => b.linkCount - a.linkCount || a.label.localeCompare(b.label))
+        .slice(0, Math.min(10, nodes.length))
+        .map((node) => node.id),
+    );
     sigma.setSetting("nodeReducer", (node, data) => {
       const res = { ...data };
+      if (!focusNode && !hovered && !labelNodes.has(node)) res.label = "";
       if (highlightNode && node === highlightNode) { res.highlighted = true; res.zIndex = 2; }
+      if (focusNeighbors && node !== focusNode && !focusNeighbors.has(node)) {
+        res.color = palette.dimFaded;
+        res.label = "";
+        res.zIndex = 0;
+      }
       if (hovered) {
         if (node === hovered.node) { res.highlighted = true; res.zIndex = 2; res.size = (data.size || BASE_NODE_SIZE) * 1.3; }
         else if (hovered.neighbors.has(node)) { res.zIndex = 1; }
-        else { res.color = palette.dimFaded; res.label = ""; res.zIndex = 0; }
+        else if (!focusNeighbors || !focusNeighbors.has(node)) { res.color = palette.dimFaded; res.label = ""; res.zIndex = 0; }
       }
       return res;
     });
     sigma.setSetting("edgeReducer", (edge, data) => {
       const res = { ...data };
+      const g = sigma.getGraph();
+      if (focusNode) {
+        const source = g.source(edge);
+        const target = g.target(edge);
+        if (source !== focusNode && target !== focusNode) res.color = palette.edgeBase;
+        if (source !== focusNode && target !== focusNode && !(focusNeighbors?.has(source) && focusNeighbors?.has(target))) res.hidden = true;
+      }
       if (hovered) {
-        const g = sigma.getGraph();
         if (g.source(edge) !== hovered.node && g.target(edge) !== hovered.node) { res.hidden = true; }
-        else { res.color = palette.edgeHover; res.size = Math.max((data.size || 1) * 1.8, 2); }
+        else if (!focusNode || g.source(edge) === focusNode || g.target(edge) === focusNode) { res.color = palette.edgeHover; res.size = Math.max((data.size || 1) * 1.8, 2); }
       }
       return res;
     });
     sigma.refresh();
-  }, [hovered, highlightNode, palette, sigma]);
+  }, [hovered, highlightNode, nodes, palette, sigma]);
 
   return null;
 }
@@ -251,6 +305,11 @@ export default function KnowledgeGraph({ data, loading, onNodeClick, highlightNo
         </div>
         <button className={`rounded-md px-2 py-1 text-xs font-medium transition ${hideStructural ? "bg-success/10 text-success ring-1 ring-success/30" : "text-muted-foreground hover:text-foreground/70 hover:bg-muted"}`}
           onClick={() => setHideStructural(!hideStructural)} title={t('graph.hideStructural.title')}>{t('graph.hideStructural')}</button>
+        {hideStructural && data && filteredData.nodes.length !== data.nodes.length && (
+          <button className="text-[11px] text-muted-foreground hover:text-foreground/80" onClick={() => setHideStructural(false)}>
+            {t('graph.showStructural', 'Show structural')}
+          </button>
+        )}
         <span className="text-xs ml-auto font-mono text-muted-foreground">{t('graph.stats', { nodes: filteredData.nodes.length, edges: filteredData.edges.length })}</span>
       </div>
 
@@ -289,13 +348,13 @@ export default function KnowledgeGraph({ data, loading, onNodeClick, highlightNo
 
       {/* Legend */}
       <div className="flex flex-wrap items-center gap-3 border-t border-border px-3 py-1.5 z-10" style={{ background: palette.toolbarBg, backdropFilter: 'blur(8px)' }}>
-        {types.map((type) => {
-          const c = colorMode === "type" ? nc(type, palette) : palette.dim;
+        {(colorMode === "type" ? types : [...new Set(filteredData.nodes.map((n) => String(n.community)))].sort((a, b) => Number(a) - Number(b))).map((item) => {
+          const c = colorMode === "type" ? nc(item, palette) : palette.communityColors[Number(item) % palette.communityColors.length];
           const isAccent = c !== palette.dim;
           return (
-            <div key={type} className="flex items-center gap-1.5">
+            <div key={item} className="flex items-center gap-1.5">
               <div className="h-2.5 w-2.5 rounded-full" style={{ background: c, boxShadow: isAccent ? 'var(--tea-shadow-xs)' : 'none' }} />
-              <span className="text-xs text-muted-foreground">{type}</span>
+              <span className="text-xs text-muted-foreground">{colorMode === "type" ? item : `Community ${item}`}</span>
             </div>
           );
         })}

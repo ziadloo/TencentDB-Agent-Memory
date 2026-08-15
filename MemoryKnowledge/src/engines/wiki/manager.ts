@@ -12,6 +12,7 @@
 import { existsSync, readFileSync, readdirSync, statSync, writeFileSync, mkdirSync } from "fs";
 import { join, basename, relative } from "path";
 import Graph from "graphology";
+import louvain from "graphology-communities-louvain";
 import type DatabaseType from "better-sqlite3";
 import type {
   WikiPage,
@@ -223,16 +224,50 @@ function buildPageGraphFromDb(
     degree.set(t, (degree.get(t) ?? 0) + 1);
   }
 
+  // Community ids are normalized by their smallest page id so the color
+  // assignment remains stable between requests even though Louvain's raw
+  // community numbers are implementation details.
+  const rawCommunities = graph.order > 1 ? louvain(graph, { rng: () => 0.5 }) : {};
+  const groups = new Map<number, string[]>();
+  for (const id of graph.nodes()) {
+    const raw = rawCommunities[id] ?? 0;
+    const group = groups.get(raw) ?? [];
+    group.push(id);
+    groups.set(raw, group);
+  }
+  const orderedGroups = [...groups.values()].sort((a, b) => a.slice().sort()[0].localeCompare(b.slice().sort()[0]));
+  const communityByNode = new Map<string, number>();
+  const communities: CommunityInfo[] = [];
+  orderedGroups.forEach((members, communityId) => {
+    const memberSet = new Set(members);
+    const internalEdges = edges.filter((e) => memberSet.has(e.source) && memberSet.has(e.target)).length;
+    const possibleEdges = members.length > 1 ? (members.length * (members.length - 1)) / 2 : 1;
+    const topNodes = members
+      .slice()
+      .sort((a, b) => (degree.get(b) ?? 0) - (degree.get(a) ?? 0) || a.localeCompare(b))
+      .slice(0, 5);
+    for (const id of members) communityByNode.set(id, communityId);
+    communities.push({
+      id: communityId,
+      nodeCount: members.length,
+      cohesion: internalEdges / possibleEdges,
+      topNodes,
+    });
+  });
+
   const nodes: GraphNode[] = visible.map((m) => ({
     id: m.id,
     label: m.title,
     type: m.type,
     path: m.relPath,
     linkCount: degree.get(m.id) ?? 0,
-    community: 0,
+    community: communityByNode.get(m.id) ?? 0,
+    snippet: m.snippet,
+    inboundLinkCount: inAdj.get(m.id)?.size ?? 0,
+    outboundLinkCount: outAdj.get(m.id)?.size ?? 0,
   }));
 
-  return { view: { nodes, edges, communities: [] }, graph, outAdj, inAdj, degree };
+  return { view: { nodes, edges, communities }, graph, outAdj, inAdj, degree };
 }
 
 function resolveTarget(

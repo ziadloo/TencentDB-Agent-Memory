@@ -29,6 +29,9 @@ export interface GraphNode {
   path: string;
   linkCount: number;
   community: number;
+  snippet?: string;
+  inboundLinkCount?: number;
+  outboundLinkCount?: number;
 }
 
 export interface GraphEdge {

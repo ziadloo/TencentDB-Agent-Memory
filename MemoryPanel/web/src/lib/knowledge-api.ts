@@ -171,7 +171,17 @@ export interface IngestStreamCallbacks {
 }
 
 // 图谱类型（与旧版兼容）
-export interface GraphNode { id: string; label: string; type: string; path: string; linkCount: number; community: number; }
+export interface GraphNode {
+  id: string;
+  label: string;
+  type: string;
+  path: string;
+  linkCount: number;
+  community: number;
+  snippet?: string;
+  inboundLinkCount?: number;
+  outboundLinkCount?: number;
+}
 export interface GraphEdge { source: string; target: string; weight: number; }
 export interface GraphData { nodes: GraphNode[]; edges: GraphEdge[]; communities?: { id: number; nodeCount: number; topNodes: string[] }[]; }
 
