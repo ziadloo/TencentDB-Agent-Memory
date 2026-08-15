@@ -159,12 +159,21 @@ export class WorkbenchRuntime {
     if (!teamId) throw new Error("team_id is required");
 
     const userId = await this.currentUser();
-    const teams = asRecord(await this.core("/v3/meta/team/list", {
-      user_id: userId,
-      limit: 1000,
-      offset: 0,
-    }));
-    const accessibleTeams = Array.isArray(teams.items) ? teams.items : [];
+    const accessibleTeams: unknown[] = [];
+    const pageSize = 100;
+    let offset = 0;
+    while (true) {
+      const teams = asRecord(await this.core("/v3/meta/team/list", {
+        user_id: userId,
+        limit: pageSize,
+        offset,
+      }));
+      const page = Array.isArray(teams.items) ? teams.items : [];
+      accessibleTeams.push(...page);
+      const total = typeof teams.total === "number" ? teams.total : undefined;
+      if (page.length < pageSize || (total !== undefined && accessibleTeams.length >= total)) break;
+      offset += pageSize;
+    }
     if (!accessibleTeams.some((team) => asRecord(team).team_id === teamId)) {
       throw new Error(`Authenticated user is not a member of team ${teamId}`);
     }

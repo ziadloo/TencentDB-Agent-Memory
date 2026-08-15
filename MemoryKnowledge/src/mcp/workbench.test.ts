@@ -60,6 +60,7 @@ describe("WorkbenchRuntime", () => {
       "/v3/meta/user/get",
       "/v3/meta/team/list",
     ]);
+    expect(requests[1]?.body).toMatchObject({ limit: 100, offset: 0 });
   });
 
   it("requires a repository when staging a CodeGraph", async () => {
