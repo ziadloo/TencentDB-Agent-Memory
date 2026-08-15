@@ -6,7 +6,6 @@ import {
   Alert,
   Button,
   Card,
-  Form,
   Input,
   Justify,
   MetricsBoard,
@@ -206,6 +205,29 @@ function formatShortTime(iso?: string | null): string {
   return `${pad(date.getMonth() + 1)}/${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
+function formatEta(seconds: number): string {
+  const wholeSeconds = Math.max(0, Math.round(seconds));
+  const hours = Math.floor(wholeSeconds / 3600);
+  const minutes = Math.floor((wholeSeconds % 3600) / 60);
+  const remainingSeconds = wholeSeconds % 60;
+  return [hours, minutes, remainingSeconds].map((value) => String(value).padStart(2, '0')).join(':');
+}
+
+function estimateEta(progress: WikiDetail['progress'], now: number, smoothedRate?: number | null): string {
+  if (!progress || progress.total_units == null || progress.completed_units <= 0) {
+    return '--:--:--';
+  }
+  const totalUnits = progress.total_units;
+  if (totalUnits <= progress.completed_units) return '00:00:00';
+  const startedAt = Date.parse(progress.started_at);
+  const elapsedSeconds = (now - startedAt) / 1000;
+  if (!Number.isFinite(startedAt) || elapsedSeconds <= 0) return '--:--:--';
+  const unitsPerSecond = smoothedRate && smoothedRate > 0
+    ? smoothedRate
+    : progress.completed_units / elapsedSeconds;
+  return formatEta((totalUnits - progress.completed_units) / unitsPerSecond);
+}
+
 // --- Types ---
 interface SearchResult {
   path: string;
@@ -388,6 +410,9 @@ export default function WikiSourcesPanel() {
     log: [],
     progress: null,
   });
+  const [etaNow, setEtaNow] = useState(() => Date.now());
+  const etaRateRef = useRef<{ runId: string; completed: number; timestamp: number; rate: number | null } | null>(null);
+  const [etaRate, setEtaRate] = useState<number | null>(null);
 
   // Detail view state（Wiki 详情：图谱 / 页面 / 搜索 Tab）
   const [activeTab, setActiveTab] = useState<DetailTab>('overview');
@@ -425,9 +450,6 @@ export default function WikiSourcesPanel() {
     }
     const seq = ++fetchSeqRef.current;
     setLoading(true);
-    // 立即清空旧数据 —— 否则切 tab 时会先看到上一个 tab 的列表，
-    // 新数据到了才突然替换，视觉上就是"闪一下"。
-    setSources([]);
     try {
       // 资产统一为团队维度（visibility=team），无 private/我的资产概念。
       // fixed tab 也是拿全量 team 资产，再按 fixedBoundIds 过滤。
@@ -563,9 +585,9 @@ export default function WikiSourcesPanel() {
     try {
       await knowledgeApi.wiki.create(activeTeamId, newName.trim());
       tea.notify.success(t('wiki.notify.created', { name: newName.trim() }));
-      setShowCreate(false);
       setNewName('');
-      fetchSources();
+      await fetchSources();
+      setShowCreate(false);
     } catch (e: any) {
       tea.notify.error(e);
     } finally {
@@ -921,6 +943,12 @@ export default function WikiSourcesPanel() {
     () => sources.find((s) => s.status === 'pending' || s.status === 'processing') ?? null,
     [sources],
   );
+  useEffect(() => {
+    if (!ingestState.active && !runningWiki) return;
+    const timer = window.setInterval(() => setEtaNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [ingestState.active, runningWiki?.wiki_id]);
+
   /** 所有正在 ingest（pending / processing）的 wiki_id 集合，用于列表中逐卡片判断按钮状态。 */
   const runningWikiIds = useMemo(
     () =>
@@ -954,6 +982,39 @@ export default function WikiSourcesPanel() {
       progress: runningWiki.progress ?? null,
     };
   }, [hasManualIngestState, ingestState, runningWiki]);
+
+  const etaProgress = displayIngestState.progress;
+  useEffect(() => {
+    if (!etaProgress) {
+      etaRateRef.current = null;
+      setEtaRate(null);
+      return;
+    }
+    const timestamp = Date.parse(etaProgress.updated_at);
+    if (!Number.isFinite(timestamp)) return;
+    const previous = etaRateRef.current;
+    if (!previous || previous.runId !== etaProgress.run_id || etaProgress.completed_units < previous.completed) {
+      etaRateRef.current = {
+        runId: etaProgress.run_id,
+        completed: etaProgress.completed_units,
+        timestamp,
+        rate: null,
+      };
+      setEtaRate(null);
+      return;
+    }
+    if (etaProgress.completed_units > previous.completed && timestamp > previous.timestamp) {
+      const instantRate = (etaProgress.completed_units - previous.completed) / ((timestamp - previous.timestamp) / 1000);
+      const rate = previous.rate == null ? instantRate : previous.rate * 0.7 + instantRate * 0.3;
+      etaRateRef.current = {
+        runId: previous.runId,
+        completed: etaProgress.completed_units,
+        timestamp,
+        rate,
+      };
+      setEtaRate(rate);
+    }
+  }, [etaProgress?.run_id, etaProgress?.completed_units, etaProgress?.updated_at]);
   const ingestBusy = displayIngestState.active || !!runningWiki;
 
   const handleIngestControl = async (action: 'pause' | 'resume' | 'stop') => {
@@ -1031,6 +1092,17 @@ export default function WikiSourcesPanel() {
   if (subView === 'detail') {
     const source = sources.find((s) => s.wiki_id === selectedWikiId);
     const wikiName = source?.name ?? '';
+    const sourceIngesting = source?.status === 'pending' || source?.status === 'processing';
+    const progress = displayIngestState.progress ?? source?.progress ?? null;
+    const completedUnits = progress?.completed_units ?? 0;
+    const totalUnits = progress?.total_units ?? completedUnits;
+    const eta = estimateEta(progress, etaNow, etaRate);
+    const showIngestPanel =
+      (displayIngestState.wiki === wikiName &&
+        (displayIngestState.active || displayIngestState.log.length > 0)) ||
+      sourceIngesting;
+    const ingestionActive = displayIngestState.active || sourceIngesting;
+    const ingestionHasProgress = displayIngestState.total > 0 || sourceIngesting;
 
     return (
       <div className="_wiki-detail-root">
@@ -1079,21 +1151,20 @@ export default function WikiSourcesPanel() {
           </Card.Body>
         </Card>
 
-        {(displayIngestState.active || displayIngestState.log.length > 0) &&
-          displayIngestState.wiki === wikiName && (
+        {showIngestPanel && (
             <Card className="_wiki-detail-ingest-card">
               <Card.Body>
                 <div className="_wiki-detail-ingest">
                   <div className="_wiki-detail-ingest-head">
                     <Text className="_wiki-detail-ingest-title">
-                      {displayIngestState.active ? (
+                      {ingestionActive ? (
                         <LoadingIcon size={14} />
                       ) : (
                         <CheckCircleIcon size={14} />
                       )}{' '}
-                      {t('wiki.detail.ingestTitle', { name: displayIngestState.wiki })}
+                      {t('wiki.detail.ingestTitle', { name: displayIngestState.wiki })} (ETA: {eta})
                     </Text>
-                    {!displayIngestState.active && (
+                    {!ingestionActive && (
                       <Button
                         type="text"
                         onClick={() => setIngestState((state) => ({ ...state, log: [] }))}
@@ -1102,18 +1173,18 @@ export default function WikiSourcesPanel() {
                       </Button>
                     )}
                   </div>
-                  {displayIngestState.total > 0 && (
+                  {ingestionHasProgress && (
                     <>
                       <div className="_wiki-ingest-stages" aria-label="Ingestion stages">
                         {(['scanning', 'ingesting', 'rebuilding-index', 'ready'] as const).map((stage, index) => {
-                          const actual = displayIngestState.progress?.stage ?? (displayIngestState.active ? 'ingesting' : 'ready');
+                          const actual = displayIngestState.progress?.stage ?? (ingestionActive ? 'ingesting' : 'ready');
                           const order = ['scanning', 'ingesting', 'rebuilding-index', 'ready'];
                           const state = actual === stage ? 'active' : order.indexOf(actual) > index ? 'complete' : 'pending';
-                          return <div key={stage} className={`_wiki-ingest-stage _wiki-ingest-stage-${state}`}><span>{index + 1}</span><Text theme="label">{stage}</Text></div>;
+                          return <div key={stage} className={`_wiki-ingest-stage _wiki-ingest-stage-${state}`}><span className="_wiki-ingest-stage-number">{index + 1}</span><Text className="_wiki-ingest-stage-label" theme="label">{stage}</Text></div>;
                         })}
                       </div>
                       <div className="_wiki-ingest-blocks" role="img" aria-label={`${displayIngestState.progress?.completed_units ?? 0} completed ingestion work units`}>
-                        {Array.from({ length: Math.max(12, Math.min(240, (displayIngestState.progress?.completed_units ?? 0) + 12)) }).map((_, index) => {
+                        {Array.from({ length: totalUnits }).map((_, index) => {
                           const completed = index < (displayIngestState.progress?.completed_units ?? 0);
                           return <span key={index} className={`_wiki-ingest-block ${completed ? '_wiki-ingest-block-done' : ''}`} />;
                         })}
@@ -1121,16 +1192,16 @@ export default function WikiSourcesPanel() {
                       <div className="_wiki-detail-ingest-meta">
                         <Text theme="label">{displayIngestState.detail}</Text>
                         <Text theme="label">
-                          {displayIngestState.progress?.completed_units ?? 0} completed units
+                          {completedUnits}/{progress?.total_units ?? '—'} completed units
                         </Text>
                       </div>
                       <div className="_wiki-ingest-controls">
                         {displayIngestState.progress?.pause_requested ? (
                           <Button onClick={() => handleIngestControl('resume')}>Resume</Button>
                         ) : (
-                          <Button disabled={!displayIngestState.active} onClick={() => handleIngestControl('pause')}>Pause</Button>
+                          <Button disabled={!ingestionActive} onClick={() => handleIngestControl('pause')}>Pause</Button>
                         )}
-                        <Button type="weak" disabled={!displayIngestState.active} onClick={() => handleIngestControl('stop')}>Stop and roll back</Button>
+                        <Button type="weak" disabled={!ingestionActive} onClick={() => handleIngestControl('stop')}>Stop and roll back</Button>
                       </div>
                       {displayIngestState.checkCount > 0 && (
                         <Text theme="label">
@@ -1142,7 +1213,7 @@ export default function WikiSourcesPanel() {
                       )}
                     </>
                   )}
-                  {displayIngestState.active && displayIngestState.currentFile && (
+                  {ingestionActive && displayIngestState.currentFile && (
                     <Text theme="label" className="_wiki-detail-ingest-file">
                       <FileIcon size={12} /> {displayIngestState.currentFile}
                     </Text>
@@ -1811,42 +1882,61 @@ export default function WikiSourcesPanel() {
         </Card.Body>
       </Card>
 
-      {/* Create Modal */}
-      {showCreate && (
-        <Modal
-          visible
-          caption={t('wiki.create.caption')}
-          size="s"
-          onClose={() => setShowCreate(false)}
-          disableEscape={submitting}
-        >
-          <Modal.Body>
-            <Form>
-              <Form.Item label={t('wiki.create.name')} required extra={t('wiki.create.extra')}>
-                <Input
-                  size="full"
-                  value={newName}
-                  onChange={setNewName}
-                  placeholder={t('wiki.create.placeholder')}
-                />
-              </Form.Item>
-            </Form>
-          </Modal.Body>
-          <Modal.Footer>
-            <Button
-              type="primary"
-              onClick={handleCreate}
-              disabled={submitting || !newName.trim()}
-              loading={submitting}
+      {/* Keep the dialog mounted; only visibility changes on open/close. */}
+      <div
+        className={`_wiki-create-overlay ${showCreate ? '_wiki-create-overlay-visible' : '_wiki-create-overlay-hidden'}`}
+        role="presentation"
+        aria-hidden={!showCreate}
+        onMouseDown={(event) => {
+          if (event.target === event.currentTarget && !submitting) setShowCreate(false);
+        }}
+      >
+        <div className="_wiki-create-dialog" role="dialog" aria-modal="true" aria-labelledby="wiki-create-dialog-title">
+          <div className="_wiki-create-dialog-card">
+            <div className="_wiki-create-dialog-title" id="wiki-create-dialog-title">
+              {t('wiki.create.caption')}
+            </div>
+            <form
+              onSubmit={(event) => {
+                event.preventDefault();
+                void handleCreate();
+              }}
             >
-              {submitting ? t('wiki.create.submitting') : t('wiki.create.submit')}
-            </Button>
-            <Button onClick={() => setShowCreate(false)} disabled={submitting}>
-              {t('common.cancel')}
-            </Button>
-          </Modal.Footer>
-        </Modal>
-      )}
+              <div className="_wiki-create-dialog-body">
+                <label className="_wiki-create-dialog-label" htmlFor="wiki-create-name">
+                  {t('wiki.create.name')} <span aria-hidden="true">*</span>
+                </label>
+                <input
+                  id="wiki-create-name"
+                  className="_wiki-create-dialog-input"
+                  value={newName}
+                  onChange={(event) => setNewName(event.target.value)}
+                  placeholder={t('wiki.create.placeholder')}
+                  disabled={submitting}
+                />
+                <div className="_wiki-create-dialog-extra">{t('wiki.create.extra')}</div>
+              </div>
+              <div className="_wiki-create-dialog-footer">
+                <button
+                  type="submit"
+                  className="_wiki-create-dialog-submit tea-btn tea-btn--primary"
+                  disabled={submitting || !newName.trim()}
+                >
+                  {submitting ? t('wiki.create.submitting') : t('wiki.create.submit')}
+                </button>
+                <button
+                  type="button"
+                  className="_wiki-create-dialog-cancel tea-btn"
+                  onClick={() => setShowCreate(false)}
+                  disabled={submitting}
+                >
+                  {t('common.cancel')}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      </div>
 
       {/* Allocate Wiki → Agent (固定资产) */}
       {allocateTarget && (

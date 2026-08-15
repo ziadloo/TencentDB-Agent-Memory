@@ -54,6 +54,7 @@ export interface WikiBuildContext {
   dir: string;
   setInternalStatus: (s: string) => void;
   reportProgress: (patch: Partial<WikiProgress> & { stage?: WikiProgressStage }) => void;
+  reportPlan?: (totalUnits: number) => void;
   waitIfPaused: () => Promise<void>;
 }
 
@@ -1111,6 +1112,7 @@ export class WikiService {
         setInternalStatus: (s) =>
           this.store.updateWikiStatus(serviceId, wikiId, { status: "processing", internal_status: s }),
         reportProgress: (patch) => this.updateProgress(serviceId, wikiId, patch),
+        reportPlan: (totalUnits) => this.updateProgress(serviceId, wikiId, { total_units: totalUnits }),
         waitIfPaused: () => this.waitIfPaused(serviceId, wikiId),
       });
       const control = this.controls.get(wikiId);

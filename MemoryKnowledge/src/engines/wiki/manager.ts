@@ -26,6 +26,7 @@ import type {
   ResultLink,
 } from "./types.js";
 import { graphMultiHopSearch } from "./graph-search.js";
+import { chunkText } from "./ingest-v2/chunker.js";
 import {
   initIndexDb,
   getReadDb,
@@ -119,6 +120,7 @@ export interface WikiSourceManager {
 
 export interface WikiIngestHooks {
   beforeRequest?: (label: string) => Promise<void> | void;
+  onPlan?: (totalUnits: number) => void;
   onUnit?: (unit: { kind: "source" | "chunk" | "page" | "merge" | "index"; label: string }) => void;
 }
 
@@ -543,6 +545,17 @@ async function runIngestIncremental(
     skipped: skipped.length,
     deleted: deleted.length,
   });
+
+  // Only advertise work whose count is knowable before LLM processing:
+  // one unit per source chunk, plus the final index rebuild. Page/merge
+  // results depend on model output and are intentionally not fabricated.
+  const plannedChunks = toIngest.reduce((count, filename) => {
+    const source = disk.find((item) => item.filename === filename);
+    if (!source) return count;
+    const text = readFileSync(source.abs, "utf-8");
+    return count + (text.length > 28_000 ? chunkText(text, { targetChars: 28_000 }).length : 1);
+  }, 0);
+  hooks.onPlan?.(plannedChunks + 1);
 
   const results: any[] = [];
   const processed: ProcessedSource[] = [];

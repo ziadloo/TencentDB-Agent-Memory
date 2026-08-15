@@ -174,8 +174,11 @@ a, .tea-link-external {
 }
 
 .tea-menu--light .tea-menu__list > li:not(.tea-menu__label) > .tea-menu__item .tea-menu__text {
+  flex: 1;
+  min-width: 0;
   padding: 0;
   line-height: 1.4;
+  white-space: nowrap;
 }
 
 /* 选中态：品牌色底 + 白字 */

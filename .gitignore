@@ -121,6 +121,7 @@ docs/knowledge/self-implement-wiki/_e2e-output/
 # Development databases (empty placeholder)
 data/skills.db
 data/tdai-memory.db
+MemoryKnowledge/data-local-debug/
 
 # Test coverage output
 coverage/

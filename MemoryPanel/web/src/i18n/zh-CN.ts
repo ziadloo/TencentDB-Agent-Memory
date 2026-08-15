@@ -983,7 +983,7 @@ export const zhCN = {
   'knowledgeApi.stage.rebuildingIndex': '重建索引',
   'knowledgeApi.stage.processing': '加工中',
   'knowledgeApi.ingest.triggering': '正在触发抽取...',
-  'knowledgeApi.ingest.check': '第 {{attempt}} 次检查：{{stage}}{{pageHint}}',
+  'knowledgeApi.ingest.check': '{{stage}}{{pageHint}}',
   'knowledgeApi.ingest.currentPage': '，当前 {{count}} 页',
   'knowledgeApi.ingest.complete': '抽取完成',
   'knowledgeApi.ingest.failed': '抽取失败',

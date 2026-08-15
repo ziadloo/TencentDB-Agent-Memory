@@ -1027,7 +1027,7 @@ export const enUS = {
   'knowledgeApi.stage.rebuildingIndex': 'Rebuilding index',
   'knowledgeApi.stage.processing': 'Processing',
   'knowledgeApi.ingest.triggering': 'Triggering ingestion...',
-  'knowledgeApi.ingest.check': 'Check #{{attempt}}: {{stage}}{{pageHint}}',
+  'knowledgeApi.ingest.check': '{{stage}}{{pageHint}}',
   'knowledgeApi.ingest.currentPage': ', {{count}} pages so far',
   'knowledgeApi.ingest.complete': 'Ingestion complete',
   'knowledgeApi.ingest.failed': 'Ingestion failed',

@@ -1,4 +1,3 @@
-import React from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './App';
 import './i18n';
@@ -9,8 +8,6 @@ import 'tea-component/dist/tea-themeable.css';
 import './index.css';
 import './tea-override.css';
 
-ReactDOM.createRoot(document.getElementById('root')!).render(
-  <React.StrictMode>
-    <App />
-  </React.StrictMode>
-);
+// Tea Component 2.x contains legacy portal/transition DOM code that is not
+// compatible with React 18's development-only StrictMode double mount.
+ReactDOM.createRoot(document.getElementById('root')!).render(<App />);

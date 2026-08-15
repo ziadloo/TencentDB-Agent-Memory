@@ -166,7 +166,7 @@ export function createKnowledgeModule(config: KnowledgeModuleConfig): KnowledgeM
 
   // ── Real wiki worker: ingest via wiki engine ──
   const realWikiWorker: WikiWorker = async (ctx) => {
-    const { wikiId, serviceId, dir, setInternalStatus, reportProgress, waitIfPaused } = ctx;
+    const { wikiId, serviceId, dir, setInternalStatus, reportProgress, reportPlan, waitIfPaused } = ctx;
     setInternalStatus("ingesting");
 
     // Per-instance LLM routing (proxy/byo/global fallback), keyed by service_id.
@@ -182,11 +182,13 @@ export function createKnowledgeModule(config: KnowledgeModuleConfig): KnowledgeM
       maxContextSize: effectiveLlm.maxTokens,
       timeoutMs: effectiveLlm.timeoutMs,
     }, {
+      onPlan: reportPlan,
       beforeRequest: async (label) => {
         await waitIfPaused();
         reportProgress({ stage: "ingesting", unit_kind: "chunk", current_label: label });
       },
       onUnit: (unit) => {
+        if (unit.kind !== "chunk" && unit.kind !== "index") return;
         reportProgress({
           stage: "ingesting",
           completed_units: ++completedUnits,

@@ -243,7 +243,7 @@
 ._wiki-ingest-stages {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 6px;
+  gap: 10px;
 }
 
 ._wiki-ingest-stage {
@@ -254,20 +254,29 @@
   color: var(--tea-color-text-secondary);
 }
 
-._wiki-ingest-stage > span {
+._wiki-ingest-stage-number {
   display: inline-flex;
+  flex: 0 0 20px;
   width: 20px;
   height: 20px;
   align-items: center;
   justify-content: center;
   border-radius: 50%;
-  background: var(--tea-color-fill-2);
+  background: var(--tea-color-bg-secondary-default);
   font-size: 11px;
 }
 
-._wiki-ingest-stage-active { color: var(--tea-color-brand); }
-._wiki-ingest-stage-active > span,
-._wiki-ingest-stage-complete > span { background: var(--tea-color-brand); color: #fff; }
+._wiki-ingest-stage-label {
+  min-width: 0;
+  white-space: nowrap;
+}
+
+._wiki-ingest-stage-active { color: var(--tea-color-text-brand-default); }
+._wiki-ingest-stage-active > ._wiki-ingest-stage-number,
+._wiki-ingest-stage-complete > ._wiki-ingest-stage-number {
+  background: var(--tea-color-bg-brand-default);
+  color: var(--tea-color-text-on-bg-brand-default);
+}
 
 ._wiki-ingest-blocks {
   display: grid;
@@ -275,19 +284,19 @@
   gap: 3px;
   min-height: 42px;
   padding: 8px;
-  border: 1px solid var(--tea-color-line-2);
+  border: 1px solid var(--tea-color-border-primary-default);
   border-radius: 4px;
-  background: var(--tea-color-fill-1);
+  background: var(--tea-color-bg-secondary-default);
 }
 
 ._wiki-ingest-block {
   display: block;
   height: 8px;
   border-radius: 1px;
-  background: var(--tea-color-fill-3);
+  background: #66a48d;
 }
 
-._wiki-ingest-block-done { background: var(--tea-color-brand); }
+._wiki-ingest-block-done { background: var(--tea-color-bg-brand-default); }
 
 ._wiki-ingest-controls { display: flex; gap: 8px; }
 
@@ -881,6 +890,106 @@
 ._wiki-detail-graph-embed {
   width: 100%;
   height: 100%;
+}
+
+._wiki-create-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgb(0 0 0 / 45%);
+}
+
+._wiki-create-overlay-hidden {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+._wiki-create-overlay-visible {
+  visibility: visible;
+}
+
+._wiki-create-dialog {
+  width: min(100%, 480px);
+}
+
+._wiki-create-dialog-card {
+  overflow: hidden;
+  border: 1px solid var(--tea-color-border-primary-default);
+  border-radius: 6px;
+  background: var(--tea-color-bg-primary-default);
+  box-shadow: 0 16px 48px rgb(0 0 0 / 20%);
+}
+
+._wiki-create-dialog-title {
+  padding: 20px 24px 16px;
+  border-bottom: 1px solid var(--tea-color-border-secondary-default);
+  color: var(--tea-color-text-primary);
+  font-size: 18px;
+  font-weight: 600;
+}
+
+._wiki-create-dialog-body {
+  padding: 20px 24px;
+}
+
+._wiki-create-dialog-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 16px 24px 20px;
+  border-top: 1px solid var(--tea-color-border-secondary-default);
+}
+
+._wiki-create-dialog-label {
+  display: block;
+  margin-bottom: 8px;
+  color: var(--tea-color-text-primary);
+  font-size: 14px;
+  font-weight: 500;
+}
+
+._wiki-create-dialog-label span {
+  color: var(--tea-color-text-error-default);
+}
+
+._wiki-create-dialog-input {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 36px;
+  padding: 7px 10px;
+  border: 1px solid var(--tea-color-border-primary-default);
+  border-radius: 4px;
+  background: var(--tea-color-bg-primary-default);
+  color: var(--tea-color-text-primary);
+  font: inherit;
+}
+
+._wiki-create-dialog-input:focus {
+  border-color: var(--tea-color-border-brand-default);
+  outline: 2px solid rgb(0 82 217 / 12%);
+}
+
+._wiki-create-dialog-extra {
+  margin-top: 8px;
+  color: var(--tea-color-text-tertiary);
+  font-size: 12px;
+}
+
+._wiki-create-dialog-submit,
+._wiki-create-dialog-cancel {
+  min-height: 32px;
+  padding: 0 16px;
+  cursor: pointer;
+}
+
+._wiki-create-dialog-submit:disabled,
+._wiki-create-dialog-cancel:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
 }
 
 @media (max-width: 960px) {
