@@ -2,7 +2,14 @@ import { randomUUID } from "node:crypto";
 
 import { callApi, type HttpClientOptions } from "./http-client.js";
 
-export interface WorkbenchContext {
+export interface TeamWorkbenchContext {
+  scope: "team";
+  user_id: string;
+  team_id: string;
+}
+
+export interface AgentWorkbenchContext {
+  scope: "agent";
   user_id: string;
   team_id: string;
   agent_id: string;
@@ -10,6 +17,8 @@ export interface WorkbenchContext {
   task_id?: string;
   chat_memory_asset_id: string;
 }
+
+export type WorkbenchContext = TeamWorkbenchContext | AgentWorkbenchContext;
 
 interface AssetRecord {
   asset_id: string;
@@ -65,14 +74,22 @@ export class WorkbenchRuntime {
     return userId;
   }
 
-  private requireContext(): WorkbenchContext {
+  private requireTeamContext(): WorkbenchContext {
     if (!this.context) {
-      throw new Error("No active workbench context. Call workbench_context_set with team_id and agent_id first.");
+      throw new Error("No active workbench context. Call workbench_team_context_set or workbench_context_set first.");
     }
     return this.context;
   }
 
-  private async ensureChatMemoryAsset(ctx: WorkbenchContext): Promise<AssetRecord> {
+  private requireAgentContext(): AgentWorkbenchContext {
+    const context = this.requireTeamContext();
+    if (context.scope !== "agent") {
+      throw new Error("Agent context is required for this workflow. Call workbench_context_set with team_id and agent_id first.");
+    }
+    return context;
+  }
+
+  private async ensureChatMemoryAsset(ctx: AgentWorkbenchContext): Promise<AssetRecord> {
     const assetId = ctx.chat_memory_asset_id;
     let asset: AssetRecord | undefined;
     try {
@@ -99,7 +116,7 @@ export class WorkbenchRuntime {
   }
 
   private async ensureBinding(
-    ctx: WorkbenchContext,
+    ctx: AgentWorkbenchContext,
     assetId: string,
     assetType: string,
     injectionMode = "summary",
@@ -137,6 +154,26 @@ export class WorkbenchRuntime {
     return { data: this.context ?? { active: false } };
   }
 
+  async teamContextSet(input: Record<string, unknown>): Promise<WorkbenchResult> {
+    const teamId = typeof input.team_id === "string" ? input.team_id : "";
+    if (!teamId) throw new Error("team_id is required");
+
+    const userId = await this.currentUser();
+    const teams = asRecord(await this.core("/v3/meta/team/list", {
+      user_id: userId,
+      limit: 1000,
+      offset: 0,
+    }));
+    const accessibleTeams = Array.isArray(teams.items) ? teams.items : [];
+    if (!accessibleTeams.some((team) => asRecord(team).team_id === teamId)) {
+      throw new Error(`Authenticated user is not a member of team ${teamId}`);
+    }
+
+    const next: TeamWorkbenchContext = { scope: "team", user_id: userId, team_id: teamId };
+    this.context = next;
+    return { data: next };
+  }
+
   async contextSet(input: Record<string, unknown>): Promise<WorkbenchResult> {
     const teamId = typeof input.team_id === "string" ? input.team_id : "";
     const agentId = typeof input.agent_id === "string" ? input.agent_id : "";
@@ -146,7 +183,8 @@ export class WorkbenchRuntime {
     const agent = asRecord(await this.core("/v3/meta/agent/get", { agent_id: agentId }));
     if (agent.team_id !== teamId) throw new Error(`Agent ${agentId} does not belong to team ${teamId}`);
     const ownerUserId = typeof agent.owner_user_id === "string" ? agent.owner_user_id : userId;
-    const next: WorkbenchContext = {
+    const next: AgentWorkbenchContext = {
+      scope: "agent",
       user_id: userId,
       team_id: teamId,
       agent_id: agentId,
@@ -168,10 +206,11 @@ export class WorkbenchRuntime {
     return {
       data: {
         model: "agent-workbench",
-        context: "explicit team/agent context with session reuse",
+        context: "explicit team or team/agent context with session reuse",
         persistence: ["ephemeral session context", "durable agent memory", "staged reusable assets"],
         workflows: [
           "workbench_context_set",
+          "workbench_team_context_set",
           "recall_context",
           "record_decision",
           "import_conversation",
@@ -181,13 +220,15 @@ export class WorkbenchRuntime {
           "asset_job_status",
         ],
         resource_types: ["chat_memory", "skill", "llm_wiki", "code_graph"],
+        team_context: "Team context supports shared asset discovery and read/status workflows without selecting an agent.",
+        agent_context: "Agent context is required for durable memory, skills, staging, publishing, and asset bindings.",
         note: "Durable resources are registered as GUI-visible assets and bound to the active agent.",
       },
     };
   }
 
   async importConversation(input: Record<string, unknown>): Promise<WorkbenchResult> {
-    const ctx = this.requireContext();
+    const ctx = this.requireAgentContext();
     const sessionId = typeof input.session_id === "string" ? input.session_id : "";
     const messages = Array.isArray(input.messages) ? input.messages : [];
     if (!sessionId || messages.length === 0) throw new Error("session_id and a non-empty messages array are required");
@@ -204,7 +245,7 @@ export class WorkbenchRuntime {
   }
 
   async recordDecision(input: Record<string, unknown>): Promise<WorkbenchResult> {
-    this.requireContext();
+    this.requireAgentContext();
     const decision = typeof input.decision === "string" ? input.decision.trim() : "";
     if (!decision) throw new Error("decision is required");
     const rationale = typeof input.rationale === "string" ? input.rationale.trim() : "";
@@ -224,13 +265,14 @@ export class WorkbenchRuntime {
   }
 
   async assetList(input: Record<string, unknown>): Promise<WorkbenchResult> {
-    const ctx = this.requireContext();
+    const ctx = this.requireTeamContext();
     const data = await this.core("/v3/meta/asset/list-accessible", {
       user_id: ctx.user_id,
       team_id: ctx.team_id,
-      agent_id: ctx.agent_id,
       action: "read",
+      ...(ctx.scope === "agent" ? { agent_id: ctx.agent_id } : {}),
       ...(typeof input.asset_type === "string" ? { asset_type: input.asset_type } : {}),
+      ...(typeof input.status === "string" ? { status: input.status } : {}),
       ...(typeof input.limit === "number" ? { limit: input.limit } : {}),
       ...(typeof input.offset === "number" ? { offset: input.offset } : {}),
     });
@@ -238,14 +280,14 @@ export class WorkbenchRuntime {
   }
 
   async assetGet(input: Record<string, unknown>): Promise<WorkbenchResult> {
-    this.requireContext();
+    this.requireTeamContext();
     const assetId = typeof input.asset_id === "string" ? input.asset_id : "";
     if (!assetId) throw new Error("asset_id is required");
     return { data: await this.core("/v3/meta/asset/get", { asset_id: assetId }) };
   }
 
   async assetUpdate(input: Record<string, unknown>): Promise<WorkbenchResult> {
-    const ctx = this.requireContext();
+    const ctx = this.requireAgentContext();
     const assetId = typeof input.asset_id === "string" ? input.asset_id : "";
     if (!assetId) throw new Error("asset_id is required");
     const patch: Record<string, unknown> = { asset_id: assetId };
@@ -259,7 +301,7 @@ export class WorkbenchRuntime {
   }
 
   async assetBind(input: Record<string, unknown>): Promise<WorkbenchResult> {
-    const ctx = this.requireContext();
+    const ctx = this.requireAgentContext();
     const assetId = typeof input.asset_id === "string" ? input.asset_id : "";
     if (!assetId) throw new Error("asset_id is required");
     const asset = asRecord(await this.core("/v3/meta/asset/get", { asset_id: assetId }));
@@ -276,7 +318,7 @@ export class WorkbenchRuntime {
   }
 
   async assetUnbind(input: Record<string, unknown>): Promise<WorkbenchResult> {
-    const ctx = this.requireContext();
+    const ctx = this.requireAgentContext();
     if (input.confirm !== true) throw new Error("Unbinding requires confirm=true");
     const assetId = typeof input.asset_id === "string" ? input.asset_id : "";
     if (!assetId) throw new Error("asset_id is required");
@@ -297,7 +339,7 @@ export class WorkbenchRuntime {
   }
 
   async recallContext(input: Record<string, unknown>): Promise<WorkbenchResult> {
-    const ctx = this.requireContext();
+    const ctx = this.requireAgentContext();
     const query = typeof input.query === "string" ? input.query.trim() : "";
     if (!query) throw new Error("query is required");
     const limit = typeof input.limit === "number" ? Math.min(Math.max(input.limit, 1), 50) : 5;
@@ -342,7 +384,7 @@ export class WorkbenchRuntime {
   }
 
   async assetStage(input: Record<string, unknown>): Promise<WorkbenchResult> {
-    const ctx = this.requireContext();
+    const ctx = this.requireAgentContext();
     const type = typeof input.type === "string" ? input.type : "";
     const name = typeof input.name === "string" ? input.name.trim() : "";
     if (!name || !["skill", "llm_wiki", "code_graph"].includes(type)) throw new Error("type and name are required");
@@ -415,7 +457,7 @@ export class WorkbenchRuntime {
   }
 
   async assetPublish(input: Record<string, unknown>): Promise<WorkbenchResult> {
-    const ctx = this.requireContext();
+    const ctx = this.requireAgentContext();
     if (input.confirm !== true) throw new Error("Publishing requires confirm=true");
     const assetId = typeof input.asset_id === "string" ? input.asset_id : "";
     if (!assetId) throw new Error("asset_id is required");
@@ -426,7 +468,7 @@ export class WorkbenchRuntime {
   }
 
   async assetJobStatus(input: Record<string, unknown>): Promise<WorkbenchResult> {
-    this.requireContext();
+    this.requireTeamContext();
     const assetId = typeof input.asset_id === "string" ? input.asset_id : "";
     if (!assetId) throw new Error("asset_id is required");
     if (assetId.startsWith("wiki-")) return { data: await callApi(this.opts, "/wiki/get", { wiki_id: assetId }) };
@@ -438,6 +480,7 @@ export class WorkbenchRuntime {
     switch (workflow) {
       case "context_get": return this.contextGet();
       case "context_set": return this.contextSet(input);
+      case "team_context_set": return this.teamContextSet(input);
       case "context_clear": return this.contextClear();
       case "capabilities": return this.capabilities();
       case "recall_context": return this.recallContext(input);

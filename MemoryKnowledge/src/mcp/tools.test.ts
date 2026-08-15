@@ -14,6 +14,7 @@ describe("MCP workspace tool registry", () => {
       "skill_search",
       "workspace_list_teams",
       "workbench_context_set",
+      "workbench_team_context_set",
       "recall_context",
       "import_conversation",
       "asset_stage",

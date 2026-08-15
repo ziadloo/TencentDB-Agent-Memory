@@ -349,6 +349,19 @@ function workbenchTools(): McpToolDef[] {
       workflow: "context_set",
     },
     {
+      name: "workbench_team_context_set",
+      description: "Set a team-only context for shared asset discovery and Wiki or CodeGraph read/status workflows. This does not create Chat Memory or select an agent.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          team_id: { type: "string", description: "Team to use for this harness session." },
+        },
+        required: ["team_id"],
+        additionalProperties: false,
+      },
+      workflow: "team_context_set",
+    },
+    {
       name: "workbench_context_clear",
       description: "Clear the active harness workbench context.",
       inputSchema: { type: "object", properties: {}, additionalProperties: false, required: [] },
@@ -419,7 +432,7 @@ function workbenchTools(): McpToolDef[] {
     },
     {
       name: "asset_list",
-      description: "List accessible assets in the active team and agent workbench.",
+      description: "List assets accessible in the active team context; an agent context additionally includes agent-aware permissions.",
       inputSchema: {
         type: "object",
         properties: {
