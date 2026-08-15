@@ -93,7 +93,9 @@ export function createMcpServer(httpOpts: HttpClientOptions): Server {
     }
     const body = tool.backend === "core"
       ? (rawArgs.payload as Record<string, unknown> | undefined)
-      : rawArgs;
+      : tool.name === "wiki_graph" && rawArgs.mode === undefined
+        ? { ...rawArgs, mode: "summary" }
+        : rawArgs;
     if (!body || typeof body !== "object" || Array.isArray(body)) {
       return {
         content: [{ type: "text", text: "Error: payload must be an object" }],

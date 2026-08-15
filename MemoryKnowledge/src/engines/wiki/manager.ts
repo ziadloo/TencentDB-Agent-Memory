@@ -105,6 +105,25 @@ export interface SearchOptions {
   minScore?: number;
 }
 
+export type GraphMode = "summary" | "neighborhood" | "full";
+
+export interface GraphViewOptions {
+  mode?: GraphMode;
+  center?: string;
+  depth?: number;
+  maxNodes?: number;
+  maxEdges?: number;
+}
+
+export interface GraphViewResponse {
+  mode: GraphMode;
+  truncated: boolean;
+  stats: { nodeCount: number; edgeCount: number; communityCount: number };
+  nodes: GraphNode[];
+  edges: GraphEdge[];
+  communities: CommunityInfo[];
+}
+
 export interface WikiSourceManager {
   register(config: WikiSourceConfig): WikiSourceState;
   sync(name: string): WikiSourceState;
@@ -112,7 +131,7 @@ export interface WikiSourceManager {
   list(): WikiSourceState[];
   remove(name: string): void;
   search(name: string, query: string, limit?: number, options?: SearchOptions): SearchResponse;
-  graph(name: string): { nodes: GraphNode[]; edges: GraphEdge[]; communities: CommunityInfo[] };
+  graph(name: string, options?: GraphViewOptions): GraphViewResponse;
   readPage(name: string, relPath: string): string | null;
   getPages(name: string): WikiPage[];
   init(config: WikiSourceConfig): WikiSourceState;
@@ -268,6 +287,69 @@ function buildPageGraphFromDb(
   }));
 
   return { view: { nodes, edges, communities }, graph, outAdj, inAdj, degree };
+}
+
+export function boundedGraphView(pageGraph: PageGraph, options: GraphViewOptions = {}): GraphViewResponse {
+  const mode = options.mode ?? "full";
+  const full = pageGraph.view;
+  const stats = {
+    nodeCount: full.nodes.length,
+    edgeCount: full.edges.length,
+    communityCount: full.communities.length,
+  };
+  if (mode === "full") return { mode, truncated: false, stats, ...full };
+
+  const maxNodes = Math.min(Math.max(options.maxNodes ?? 100, 1), 1000);
+  const maxEdges = Math.min(Math.max(options.maxEdges ?? 500, 1), 5000);
+  const nodeById = new Map(full.nodes.map((node) => [node.id, node]));
+  let selectedIds: Set<string>;
+
+  if (mode === "neighborhood") {
+    const distances = new Map<string, number>();
+    const center = options.center;
+    if (center && nodeById.has(center)) {
+      const queue = [center];
+      distances.set(center, 0);
+      const depth = Math.min(Math.max(options.depth ?? 2, 0), 5);
+      while (queue.length > 0) {
+        const current = queue.shift()!;
+        const distance = distances.get(current)!;
+        if (distance >= depth) continue;
+        const neighbors = new Set([
+          ...(pageGraph.outAdj.get(current) ?? []),
+          ...(pageGraph.inAdj.get(current) ?? []),
+        ]);
+        for (const neighbor of neighbors) {
+          if (!distances.has(neighbor)) {
+            distances.set(neighbor, distance + 1);
+            queue.push(neighbor);
+          }
+        }
+      }
+    }
+    selectedIds = new Set([...distances.entries()]
+      .sort((a, b) => a[1] - b[1] || (pageGraph.degree.get(b[0]) ?? 0) - (pageGraph.degree.get(a[0]) ?? 0) || a[0].localeCompare(b[0]))
+      .slice(0, maxNodes)
+      .map(([id]) => id));
+  } else {
+    selectedIds = new Set(full.nodes
+      .slice()
+      .sort((a, b) => b.linkCount - a.linkCount || a.id.localeCompare(b.id))
+      .slice(0, maxNodes)
+      .map((node) => node.id));
+  }
+
+  const nodes = full.nodes.filter((node) => selectedIds.has(node.id));
+  const candidateEdges = full.edges.filter((edge) => selectedIds.has(edge.source) && selectedIds.has(edge.target));
+  const edges = candidateEdges.slice(0, maxEdges);
+  return {
+    mode,
+    truncated: nodes.length < full.nodes.length || edges.length < full.edges.length,
+    stats,
+    nodes,
+    edges,
+    communities: full.communities,
+  };
 }
 
 function resolveTarget(
@@ -921,14 +1003,22 @@ export function createWikiSourceManager(dataDir: string): WikiSourceManager {
       persist();
     },
     search: (name, query, limit, options) => searchInternal(name, query, limit ?? DEFAULT_LIMIT, options ?? {}),
-    graph: (name) => {
+    graph: (name, options) => {
       const state = sources.get(name);
-      if (!state) return { nodes: [], edges: [], communities: [] };
+      const empty = (): GraphViewResponse => ({
+        mode: options?.mode ?? "full",
+        truncated: false,
+        stats: { nodeCount: 0, edgeCount: 0, communityCount: 0 },
+        nodes: [],
+        edges: [],
+        communities: [],
+      });
+      if (!state) return empty();
       try {
         const db = getReadDb(name, state.path);
-        return loadReadModel(db).pg.view;
+        return boundedGraphView(loadReadModel(db).pg, options);
       } catch {
-        return { nodes: [], edges: [], communities: [] };
+        return empty();
       }
     },
     readPage: (name, relPath) => {

@@ -124,27 +124,33 @@ export class WorkbenchRuntime {
     priority = 50,
   ): Promise<void> {
     const bindings = await this.listAgentBindings(ctx);
-    if (!bindings.some((binding) => binding.asset_id === assetId)) {
+    const existing = bindings.find((binding) => binding.asset_id === assetId);
+    const normalized = bindings.map((binding) => ({
+      asset_id: binding.asset_id,
+      asset_type: binding.asset_type,
+      injection_mode: typeof binding.injection_mode === "string" ? binding.injection_mode : "summary",
+      priority: typeof binding.priority === "number" ? binding.priority : 50,
+      created_by: ctx.owner_user_id,
+    }));
+    if (existing) {
+      const currentMode = typeof existing.injection_mode === "string" ? existing.injection_mode : "summary";
+      const currentPriority = typeof existing.priority === "number" ? existing.priority : 50;
+      if (currentMode === injectionMode && currentPriority === priority) return;
       await this.core("/v3/meta/agent-fixed-asset/set", {
         agent_id: ctx.agent_id,
-        bindings: [
-          ...bindings.map((binding) => ({
-            asset_id: binding.asset_id,
-            asset_type: binding.asset_type,
-            injection_mode: typeof binding.injection_mode === "string" ? binding.injection_mode : "summary",
-            priority: typeof binding.priority === "number" ? binding.priority : 50,
-            created_by: ctx.owner_user_id,
-          })),
-          {
-            asset_id: assetId,
-            asset_type: assetType,
-            injection_mode: injectionMode,
-            priority,
-            created_by: ctx.owner_user_id,
-          },
-        ],
+        bindings: normalized.map((binding) => binding.asset_id === assetId
+          ? { ...binding, injection_mode: injectionMode, priority }
+          : binding),
       });
+      return;
     }
+    await this.core("/v3/meta/agent-fixed-asset/set", {
+      agent_id: ctx.agent_id,
+      bindings: [
+        ...normalized,
+        { asset_id: assetId, asset_type: assetType, injection_mode: injectionMode, priority, created_by: ctx.owner_user_id },
+      ],
+    });
   }
 
   private async listAgentBindings(ctx: AgentWorkbenchContext): Promise<AssetRecord[]> {
@@ -241,7 +247,9 @@ export class WorkbenchRuntime {
           "asset_publish",
           "asset_job_status",
         ],
-        resource_types: ["chat_memory", "skill", "llm_wiki", "code_graph"],
+        resource_types: ["chat_memory", "llm_wiki", "code_graph"],
+        optional_resource_types: ["skill"],
+        skill_availability: "deployment-configured",
         team_context: "Team context supports shared asset discovery and read/status workflows without selecting an agent.",
         agent_context: "Agent context is required for durable memory, skills, staging, publishing, and asset bindings.",
         note: "Durable resources are registered as GUI-visible assets and bound to the active agent.",
@@ -288,16 +296,33 @@ export class WorkbenchRuntime {
 
   async assetList(input: Record<string, unknown>): Promise<WorkbenchResult> {
     const ctx = this.requireTeamContext();
-    const data = await this.core("/v3/meta/asset/list-accessible", {
+    const assetType = typeof input.asset_type === "string" ? input.asset_type : undefined;
+    const status = typeof input.status === "string" ? input.status : undefined;
+    const limit = typeof input.limit === "number" ? Math.min(Math.max(input.limit, 1), METADATA_PAGE_SIZE) : 20;
+    const offset = typeof input.offset === "number" ? Math.max(input.offset, 0) : 0;
+    const request = {
       user_id: ctx.user_id,
       team_id: ctx.team_id,
       action: "read",
       ...(ctx.scope === "agent" ? { agent_id: ctx.agent_id } : {}),
-      ...(typeof input.asset_type === "string" ? { asset_type: input.asset_type } : {}),
-      ...(typeof input.status === "string" ? { status: input.status } : {}),
-      ...(typeof input.limit === "number" ? { limit: Math.min(Math.max(input.limit, 1), METADATA_PAGE_SIZE) } : {}),
-      ...(typeof input.offset === "number" ? { offset: input.offset } : {}),
-    });
+      ...(assetType ? { asset_type: assetType } : {}),
+      limit,
+      offset,
+    };
+    if (status) {
+      const all: AssetRecord[] = [];
+      let pageOffset = 0;
+      while (true) {
+        const page = asRecord(await this.core("/v3/meta/asset/list-accessible", { ...request, limit: METADATA_PAGE_SIZE, offset: pageOffset }));
+        const items = itemsOf(page);
+        all.push(...items);
+        if (items.length < METADATA_PAGE_SIZE) break;
+        pageOffset += METADATA_PAGE_SIZE;
+      }
+      const filtered = all.filter((asset) => asset.status === status);
+      return { data: { items: filtered.slice(offset, offset + limit), total: filtered.length, limit, offset } };
+    }
+    const data = await this.core("/v3/meta/asset/list-accessible", request);
     return { data };
   }
 
@@ -373,7 +398,8 @@ export class WorkbenchRuntime {
       this.assetList({ limit: METADATA_PAGE_SIZE }),
     ]);
     const value = (index: number): unknown => settled[index]?.status === "fulfilled" ? settled[index].value : null;
-    const assets = itemsOf(value(3));
+    const assetListResult = asRecord(value(3));
+    const assets = itemsOf(assetListResult.data);
     const includeAssets = input.include_assets !== false;
     const knowledge = includeAssets
       ? await Promise.all(assets.filter((asset) => READABLE_ASSET_TYPES.has(asset.asset_type) && asset.asset_id !== ctx.chat_memory_asset_id).slice(0, 12).map(async (asset) => {
@@ -485,6 +511,13 @@ export class WorkbenchRuntime {
     if (!assetId) throw new Error("asset_id is required");
     const asset = await this.core("/v3/meta/asset/get", { asset_id: assetId }) as AssetRecord;
     if (asset.owner_user_id && asset.owner_user_id !== ctx.owner_user_id) throw new Error("Only the asset owner can publish this asset");
+    if (asset.asset_type === "llm_wiki") {
+      const resource = asRecord(await callApi(this.opts, "/wiki/get", { wiki_id: assetId }));
+      if (resource.status !== "ready") throw new Error(`Wiki ${assetId} is not ready for publishing (status: ${String(resource.status ?? "unknown")})`);
+    } else if (asset.asset_type === "code_graph") {
+      const resource = asRecord(await callApi(this.opts, "/code-graph/get", { code_graph_id: assetId }));
+      if (resource.status !== "ready") throw new Error(`CodeGraph ${assetId} is not ready for publishing (status: ${String(resource.status ?? "unknown")})`);
+    }
     const updated = await this.core("/v3/meta/asset/update", { asset_id: assetId, status: "approved" });
     return { data: { asset: updated, published: true } };
   }

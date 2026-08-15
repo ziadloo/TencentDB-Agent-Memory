@@ -217,11 +217,16 @@ export const MCP_TOOLS: McpToolDef[] = [
   },
   {
     name: "wiki_graph",
-    description: "Get the wiki knowledge graph (nodes, edges, communities).",
+    description: "Get a bounded Wiki graph summary by default. Use neighborhood around a center node for focused context, or explicitly request full for the complete graph.",
     inputSchema: {
       type: "object",
       properties: {
         wiki_id: { type: "string", description: "The wiki ID (wiki-...)" },
+        mode: { type: "string", enum: ["summary", "neighborhood", "full"], default: "summary" },
+        center: { type: "string", description: "Canonical Wiki graph node ID; required for neighborhood mode." },
+        depth: { type: "integer", minimum: 0, maximum: 5, default: 2 },
+        max_nodes: { type: "integer", minimum: 1, maximum: 1000, default: 100 },
+        max_edges: { type: "integer", minimum: 1, maximum: 5000, default: 500 },
       },
       required: ["wiki_id"],
     },

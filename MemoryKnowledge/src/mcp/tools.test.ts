@@ -45,4 +45,12 @@ describe("MCP workspace tool registry", () => {
     expect(tool?.backend).toBeUndefined();
     expect(tool?.inputSchema.required).toEqual(["query"]);
   });
+
+  it("defaults Wiki graph access to bounded summary mode", () => {
+    const tool = MCP_TOOLS.find((candidate) => candidate.name === "wiki_graph");
+    expect(tool?.inputSchema.properties.mode).toMatchObject({
+      enum: ["summary", "neighborhood", "full"],
+      default: "summary",
+    });
+  });
 });

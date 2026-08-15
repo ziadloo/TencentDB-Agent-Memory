@@ -107,6 +107,14 @@ The lower-level resource tools remain available for compatibility, but new
 harness integrations should prefer the `workbench_*`, `recall_*`, and
 `asset_*` workflows.
 
+`wiki_graph` returns a bounded summary by default for harness context safety.
+Use `mode: "neighborhood"` with a canonical node ID for focused traversal, or
+explicitly use `mode: "full"` when the complete graph is required. GUI graph
+requests without a mode retain the full graph response.
+
+Skill workflows are optional and depend on the MemoryCore Skill module being
+enabled in the deployment; inspect `workbench_capabilities` before using them.
+
 ## 常用命令
 
 ```bash

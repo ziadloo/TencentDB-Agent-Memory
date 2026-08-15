@@ -472,7 +472,22 @@ export function createWikiRoutes(deps: WikiRouteDeps): Hono {
     if (row.status !== "ready") {
       return c.json(wrapOk({ nodes: [], edges: [], communities: [] }));
     }
-    const graphData = wikiMgr.graph(wikiId);
+    const rawMode = body.mode;
+    if (rawMode !== undefined && rawMode !== "summary" && rawMode !== "neighborhood" && rawMode !== "full") {
+      return c.json(wrapError(400, "mode must be summary, neighborhood, or full"), 400);
+    }
+    const mode = rawMode as "summary" | "neighborhood" | "full" | undefined;
+    const center = typeof body.center === "string" ? body.center : undefined;
+    if (mode === "neighborhood" && !center) {
+      return c.json(wrapError(400, "center is required for neighborhood mode"), 400);
+    }
+    const graphData = wikiMgr.graph(wikiId, mode ? {
+      mode,
+      center,
+      depth: typeof body.depth === "number" ? body.depth : undefined,
+      maxNodes: typeof body.max_nodes === "number" ? body.max_nodes : undefined,
+      maxEdges: typeof body.max_edges === "number" ? body.max_edges : undefined,
+    } : undefined);
     return c.json(wrapOk(graphData));
   });
 

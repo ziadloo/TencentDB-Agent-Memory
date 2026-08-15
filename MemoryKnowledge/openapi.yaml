@@ -975,6 +975,29 @@ components:
       properties:
         wiki_id:
           type: string
+        mode:
+          type: string
+          enum: [summary, neighborhood, full]
+          default: full
+          description: summary and neighborhood are bounded views; omitted preserves the full GUI-compatible response.
+        center:
+          type: string
+          description: Canonical graph node ID; required for neighborhood mode.
+        depth:
+          type: integer
+          minimum: 0
+          maximum: 5
+          default: 2
+        max_nodes:
+          type: integer
+          minimum: 1
+          maximum: 1000
+          default: 100
+        max_edges:
+          type: integer
+          minimum: 1
+          maximum: 5000
+          default: 500
 
     WikiSearchRequest:
       type: object
