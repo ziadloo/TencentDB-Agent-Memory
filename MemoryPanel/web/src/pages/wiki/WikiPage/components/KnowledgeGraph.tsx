@@ -4,6 +4,7 @@ import Graph from "graphology";
 import { SigmaContainer, useLoadGraph, useRegisterEvents, useSigma } from "@react-sigma/core";
 import "@react-sigma/core/lib/style.css";
 import forceAtlas2 from "graphology-layout-forceatlas2";
+import FA2LayoutSupervisor from "graphology-layout-forceatlas2/worker";
 import { SearchIcon, CloseIcon } from 'tea-icons-react';
 
 // --- Types (re-exported from knowledge-api) ---
@@ -118,9 +119,15 @@ function GraphLoader({ nodes, edges, colorMode, onNodeClick, highlightNode, pale
   const registerEvents = useRegisterEvents();
   const [hovered, setHovered] = useState<{ node: string; neighbors: Set<string> } | null>(null);
   const draggedNode = useRef<string | null>(null);
+  const draggedPosition = useRef<{ x: number; y: number } | null>(null);
   const positions = useRef(new Map<string, { x: number; y: number }>());
+  const physics = useRef<FA2LayoutSupervisor | null>(null);
+  const physicsStopTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
+    physics.current?.kill();
+    physics.current = null;
+    if (physicsStopTimer.current) clearTimeout(physicsStopTimer.current);
     const graph = new Graph();
     const maxLinks = Math.max(...nodes.map((n) => n.linkCount), 1);
     for (const node of nodes) {
@@ -148,7 +155,28 @@ function GraphLoader({ nodes, edges, colorMode, onNodeClick, highlightNode, pale
       graph.forEachNode((id, attributes) => positions.current.set(id, { x: attributes.x, y: attributes.y }));
     }
     loadGraph(graph);
+    const sigmaGraph = sigma.getGraph();
+    physics.current = new FA2LayoutSupervisor(sigmaGraph, {
+      settings: {
+        gravity: 1.2,
+        scalingRatio: nodes.length > 400 ? 3.5 : 2.5,
+        strongGravityMode: true,
+        barnesHutOptimize: nodes.length > 50,
+        slowDown: 8,
+      },
+      outputReducer: (node, attributes) => {
+        if (node === draggedNode.current && draggedPosition.current) {
+          return { ...attributes, ...draggedPosition.current };
+        }
+        return attributes;
+      },
+    });
     sigma.refresh();
+    return () => {
+      if (physicsStopTimer.current) clearTimeout(physicsStopTimer.current);
+      physics.current?.kill();
+      physics.current = null;
+    };
   }, [nodes, edges, colorMode, loadGraph, palette, sigma]);
 
   useEffect(() => {
@@ -158,6 +186,11 @@ function GraphLoader({ nodes, edges, colorMode, onNodeClick, highlightNode, pale
       clickNode: (e) => { const n = nodes.find((n) => n.id === e.node); if (n && onNodeClick) onNodeClick(n); },
       downNode: (e) => {
         draggedNode.current = e.node;
+        const attributes = sigma.getGraph().getNodeAttributes(e.node);
+        draggedPosition.current = { x: attributes.x, y: attributes.y };
+        if (physicsStopTimer.current) clearTimeout(physicsStopTimer.current);
+        physics.current?.start();
+        sigma.getCamera().disable();
         e.preventSigmaDefault();
         const c = sigma.getContainer();
         if (c) c.style.cursor = "grabbing";
@@ -165,6 +198,7 @@ function GraphLoader({ nodes, edges, colorMode, onNodeClick, highlightNode, pale
       mousemovebody: (e) => {
         if (!draggedNode.current) return;
         const position = sigma.viewportToGraph(e);
+        draggedPosition.current = position;
         sigma.getGraph().setNodeAttribute(draggedNode.current, "x", position.x);
         sigma.getGraph().setNodeAttribute(draggedNode.current, "y", position.y);
         positions.current.set(draggedNode.current, position);
@@ -173,6 +207,13 @@ function GraphLoader({ nodes, edges, colorMode, onNodeClick, highlightNode, pale
       },
       mouseup: () => {
         draggedNode.current = null;
+        if (physicsStopTimer.current) clearTimeout(physicsStopTimer.current);
+        physicsStopTimer.current = setTimeout(() => {
+          physics.current?.stop();
+          physicsStopTimer.current = null;
+        }, 1200);
+        draggedPosition.current = null;
+        sigma.getCamera().enable();
         const c = sigma.getContainer();
         if (c) c.style.cursor = "default";
       },
